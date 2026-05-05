@@ -17,6 +17,30 @@ If `$PIDGIN_API_KEY` is unset, stop and tell the user:
 
 Do not proceed without a key.
 
+## About plans
+
+Pidgin has two tiers. The **free** tier accepts **HTML uploads only** and its files expire 30 days after the last upload, with a 5 GB monthly bandwidth cap. The **paid** tier ($5/mo or $50/yr) accepts any file type, has no expiry, and no bandwidth cap. The user can upgrade at https://pidgin.sh/dashboard/billing.
+
+If the user is on free and asks you to share a non-HTML artifact (PNG, PDF, plot, etc.), check their plan first via the preflight below — don't waste a request.
+
+### Plan preflight (non-HTML uploads only)
+
+For HTML uploads, skip this — they always succeed regardless of plan.
+
+For non-HTML uploads, before the POST/PUT:
+
+```bash
+ME=$(curl -sS https://api.pidgin.sh/v1/me -H "Authorization: Bearer $PIDGIN_API_KEY")
+ALLOW_NON_HTML=$(echo "$ME" | jq -r '.plan.allow_non_html')
+```
+
+If `$ALLOW_NON_HTML` is `false`, stop and tell the user:
+
+> This file type ({content_type}) requires a paid pidgin plan. Free accepts HTML only.
+> Upgrade at https://pidgin.sh/dashboard/billing, or convert the artifact to HTML.
+
+Do not attempt the upload.
+
 ## Upload a new artifact
 
 ```bash
@@ -30,19 +54,19 @@ curl -sS -X POST https://api.pidgin.sh/v1/items \
 `<basename>` is the filename only (e.g. `report.html`, not `/tmp/report.html`).
 `<mime-type>` MUST match the file — this is what makes the URL render in a browser instead of downloading. Pick from this table; fall back to `application/octet-stream` for unknown extensions:
 
-| extension | content-type |
-|-----------|--------------|
-| `.html`, `.htm` | `text/html` |
-| `.png` | `image/png` |
-| `.jpg`, `.jpeg` | `image/jpeg` |
-| `.gif` | `image/gif` |
-| `.webp` | `image/webp` |
-| `.svg` | `image/svg+xml` |
-| `.pdf` | `application/pdf` |
-| `.json` | `application/json` |
-| `.txt`, `.log` | `text/plain` |
-| `.md` | `text/markdown` |
-| `.csv` | `text/csv` |
+| extension | content-type | tier |
+|-----------|--------------|------|
+| `.html`, `.htm` | `text/html` | free + paid |
+| `.png` | `image/png` | paid only |
+| `.jpg`, `.jpeg` | `image/jpeg` | paid only |
+| `.gif` | `image/gif` | paid only |
+| `.webp` | `image/webp` | paid only |
+| `.svg` | `image/svg+xml` | paid only |
+| `.pdf` | `application/pdf` | paid only |
+| `.json` | `application/json` | paid only |
+| `.txt`, `.log` | `text/plain` | paid only |
+| `.md` | `text/markdown` | paid only |
+| `.csv` | `text/csv` | paid only |
 
 The response on success is HTTP 201 with JSON like:
 
@@ -104,6 +128,7 @@ On any non-2xx response the body is JSON of the form `{ "error": "<code>", "mess
 - **411** — `Content-Length` header missing. This shouldn't happen with `curl --data-binary @<path>`; if it does, the file is unreadable.
 - **413** — file too big for the user's plan. Message includes the byte cap.
 - **409** — when deleting a single version of an item with only one version. Use `DELETE /v1/items/<id>` instead.
+- **415** — file type not allowed by your plan. Free accepts HTML only. Surface the `message` verbatim — it includes the upgrade URL.
 - **404** — wrong item id, or the item belongs to a different user.
 
 When invoked, do the smallest thing the user asked for — one upload, one update, one list — and stop. Don't proactively delete or list unless asked.
