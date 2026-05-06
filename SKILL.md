@@ -113,7 +113,9 @@ The artifact's HTML calls `window.pidgin.respond(payload)`. This is a non-normat
 
 ```html
 <!doctype html>
-<title>Pick one</title>
+<html>
+<head><title>Pick one</title></head>
+<body>
 <h1>Which design works best?</h1>
 <button onclick="pick('A')">A: Minimalist</button>
 <button onclick="pick('B')">B: Bold</button>
@@ -126,7 +128,11 @@ async function pick(choice) {
     result.ok ? 'Got it. Switch back to your terminal.' : 'This question is no longer waiting.';
 }
 </script>
+</body>
+</html>
 ```
+
+**Important: include an explicit `<body>` tag.** HTML5 lets you omit it (browsers infer one), but pidgin's CDN injects the `window.pidgin.respond` shim by matching the literal `<body>` element in the source. Without it, `window.pidgin` is undefined at runtime and your buttons throw. The same applies to free-tier banner injection — always wrap your content in `<body>...</body>`.
 
 You own all visuals — pidgin only provides `window.pidgin.respond`.
 
@@ -167,6 +173,8 @@ curl -sS -X POST https://api.pidgin.sh/v1/items \
 | `.txt`, `.log` | `text/plain` | paid only |
 | `.md` | `text/markdown` | paid only |
 | `.csv` | `text/csv` | paid only |
+
+**When generating HTML, always wrap your content in an explicit `<body>...</body>`.** HTML5 lets you omit the body tag and most browsers infer one, but pidgin's CDN injects content (free-tier banner, paid-tier response-channel shim) by matching the literal `<body>` element in the source. Without it, the injection silently no-ops and any `window.pidgin.respond()` calls fail.
 
 The response on success is HTTP 201 with JSON like:
 
