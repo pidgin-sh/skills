@@ -41,6 +41,106 @@ If `$ALLOW_NON_HTML` is `false`, stop and tell the user:
 
 Do not attempt the upload.
 
+## Interactive responses (paid)
+
+If the user wants the human to interact with an artifact and have you receive
+the result programmatically (option pickers, forms, "review and approve" flows),
+use the response-channel feature. Pidgin gives the served HTML a single JS
+function — `window.pidgin.respond(payload)` — that POSTs a JSON payload back to
+pidgin. You wait for that payload with a single blocking call.
+
+This is **paid only**. Free users get 402 with `error: "channel_not_allowed"`.
+
+### Plan preflight (response channels)
+
+Before uploading with `--respond`, check `plan.allow_response_channel`:
+
+```bash
+ME=$(curl -sS https://api.pidgin.sh/v1/me -H "Authorization: Bearer $PIDGIN_API_KEY")
+ALLOW_CH=$(echo "$ME" | jq -r '.plan.allow_response_channel')
+```
+
+If `$ALLOW_CH` is `false`, stop and tell the user:
+
+> Interactive response channels require a paid pidgin plan. Upgrade at https://pidgin.sh/dashboard/billing.
+
+### Upload with a channel
+
+Add the `X-Pidgin-Channel: respond` header to a normal upload. The response gains a `channel` block:
+
+```bash
+curl -sS -X POST https://api.pidgin.sh/v1/items \
+  -H "Authorization: Bearer $PIDGIN_API_KEY" \
+  -H "X-Filename: ask.html" \
+  -H "Content-Type: text/html" \
+  -H "X-Pidgin-Channel: respond" \
+  --data-binary @./ask.html
+# → { "id":"itm_…", "url":"…", "version":1, "channel": { "handle":"ch_…", "expires_at":… }, ... }
+```
+
+Print the `url` to the user. Remember the `channel.handle`.
+
+### Wait for the response
+
+```bash
+# Long-poll. Loop until status is non-open or you give up.
+while :; do
+  RES=$(curl -sS -w "\n%{http_code}" "https://api.pidgin.sh/v1/channels/$HANDLE/wait" \
+    -H "Authorization: Bearer $PIDGIN_API_KEY")
+  CODE=$(echo "$RES" | tail -n1)
+  BODY=$(echo "$RES" | sed '$d')
+  if [ "$CODE" = "204" ]; then continue; fi
+  if [ "$CODE" = "200" ]; then echo "$BODY"; break; fi
+  echo "$BODY"; exit 1
+done
+```
+
+The `200` body is one of:
+
+```json
+{ "status": "responded", "payload": <agent-defined JSON>, "responded_at": 1714991900 }
+{ "status": "timed_out" }
+{ "status": "superseded" }
+{ "status": "abandoned" }
+```
+
+Branch on `status`. On `responded`, act on `payload`. On any other status, tell
+the user the question is no longer waiting and stop.
+
+### What the served HTML looks like
+
+The artifact's HTML calls `window.pidgin.respond(payload)`. This is a non-normative example — adapt as needed:
+
+```html
+<!doctype html>
+<title>Pick one</title>
+<h1>Which design works best?</h1>
+<button onclick="pick('A')">A: Minimalist</button>
+<button onclick="pick('B')">B: Bold</button>
+<button onclick="pick('C')">C: Classic</button>
+<div id="status"></div>
+<script>
+async function pick(choice) {
+  const result = await window.pidgin.respond({ choice });
+  document.getElementById('status').textContent =
+    result.ok ? 'Got it. Switch back to your terminal.' : 'This question is no longer waiting.';
+}
+</script>
+```
+
+You own all visuals — pidgin only provides `window.pidgin.respond`.
+
+### Abandoning a wait
+
+If you give up before the user answers:
+
+```bash
+curl -sS -X POST "https://api.pidgin.sh/v1/channels/$HANDLE/abandon" \
+  -H "Authorization: Bearer $PIDGIN_API_KEY"
+```
+
+The user's tab will see "no longer waiting" on submit. Idempotent — safe to call once on cancellation.
+
 ## Upload a new artifact
 
 ```bash
@@ -124,11 +224,15 @@ Both return HTTP 204 (empty body) on success. Confirm the deletion to the user w
 On any non-2xx response the body is JSON of the form `{ "error": "<code>", "message": "<human readable>" }`. Surface the `message` to the user verbatim. Do not paraphrase, do not retry. Common cases:
 
 - **401** — `PIDGIN_API_KEY` is missing, expired, or revoked. Tell the user to recreate one at https://pidgin.sh/dashboard/keys.
-- **402** — storage quota exceeded. Tell the user the message verbatim; they can free space by deleting older items.
+- **402** — two cases, distinguished by `error`:
+  - `storage_quota_exceeded` — storage quota exceeded. Tell the user the message verbatim; they can free space by deleting older items.
+  - `channel_not_allowed` — interactive response channels require paid. Surface the message verbatim.
 - **411** — `Content-Length` header missing. This shouldn't happen with `curl --data-binary @<path>`; if it does, the file is unreadable.
 - **413** — file too big for the user's plan. Message includes the byte cap.
 - **409** — when deleting a single version of an item with only one version. Use `DELETE /v1/items/<id>` instead.
 - **415** — file type not allowed by your plan. Free accepts HTML only. Surface the `message` verbatim — it includes the upgrade URL.
 - **404** — wrong item id, or the item belongs to a different user.
+- **410** (with `error: channel_closed`, `reason`) — channel is no longer open; check `reason` (`responded`, `timed_out`, `superseded`, `abandoned`).
+- **403** (on `/respond`) — origin does not match the artifact's subdomain. Should not happen if the artifact is using the injected `window.pidgin.respond`.
 
 When invoked, do the smallest thing the user asked for — one upload, one update, one list — and stop. Don't proactively delete or list unless asked.
