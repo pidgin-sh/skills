@@ -107,6 +107,35 @@ The `200` body is one of:
 Branch on `status`. On `responded`, act on `payload`. On any other status, tell
 the user the question is no longer waiting and stop.
 
+### Wait without blocking the conversation
+
+The blocking loop above ties up your chat turn until the human responds — the user can't ask you anything else, switch tasks, or even cancel cleanly. For interactive use, **don't run the wait loop in the foreground**. Pick whichever non-blocking mechanism your runtime offers:
+
+- **Prefer your runtime's native background-process facility if you have one.** In Claude Code, that's the Bash tool's `run_in_background: true` (returns a `bash_id`; read accumulated output later with `BashOutput`, or stream new lines with `Monitor`). Other harnesses may have a job-scheduling tool, an async task primitive, or a push-notification mechanism. Use it.
+- **Otherwise, fall back to a plain shell `&`.** Spawn the poll loop as a backgrounded subshell that writes the result to a known file, then peek at the file when relevant:
+
+  ```bash
+  ( while :; do
+      RES=$(curl -sS -w "\n%{http_code}" "https://api.pidgin.sh/v1/channels/$HANDLE/wait" \
+        -H "Authorization: Bearer $PIDGIN_API_KEY")
+      CODE=$(printf '%s' "$RES" | tail -n1)
+      BODY=$(printf '%s' "$RES" | sed '$d')
+      case "$CODE" in
+        204) continue ;;
+        200) printf '%s' "$BODY" > "/tmp/pidgin-$HANDLE.json"; exit 0 ;;
+        *)   printf '{"error":%s,"body":%s}' "$CODE" "$BODY" > "/tmp/pidgin-$HANDLE.json"; exit 1 ;;
+      esac
+    done ) &
+  ```
+
+  Then check whenever it makes sense — when the user mentions they've responded, or at the top of a new turn after a quiet stretch:
+
+  ```bash
+  [ -s "/tmp/pidgin-$HANDLE.json" ] && cat "/tmp/pidgin-$HANDLE.json" || echo "still waiting"
+  ```
+
+Either way: when you're done with the channel (responded / abandoned / cleaning up), remove `/tmp/pidgin-$HANDLE.json` so a future wait on a re-used handle isn't confused by stale state.
+
 ### What the served HTML looks like
 
 The artifact's HTML calls `window.pidgin.respond(payload)`. This is a non-normative example — adapt as needed:
