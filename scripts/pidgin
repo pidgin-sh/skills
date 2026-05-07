@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# pidgin-share skill wrapper. Auth via $PIDGIN_API_KEY. Output: API JSON on
+# stdout. Exit non-zero on HTTP non-2xx; the response body (which contains
+# {error, message}) still goes to stdout so the caller can parse it.
+
+set -u
+
+API="${PIDGIN_API_BASE:-https://api.pidgin.sh}"
+
+if [ -z "${PIDGIN_API_KEY:-}" ]; then
+  echo "PIDGIN_API_KEY is not set. Create a key at https://pidgin.sh/dashboard/keys and export it." >&2
+  exit 2
+fi
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  pidgin me
+  pidgin upload <path> [--respond] [--filename NAME]
+  pidgin update <id> <path> [--filename NAME]
+  pidgin list [--limit N]
+  pidgin delete <id> [--version N]
+  pidgin wait <handle>
+  pidgin abandon <handle>
+EOF
+}
+
+detect_ct() {
+  local f
+  f=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$f" in
+    *.html|*.htm)   echo "text/html" ;;
+    *.png)          echo "image/png" ;;
+    *.jpg|*.jpeg)   echo "image/jpeg" ;;
+    *.gif)          echo "image/gif" ;;
+    *.webp)         echo "image/webp" ;;
+    *.svg)          echo "image/svg+xml" ;;
+    *.pdf)          echo "application/pdf" ;;
+    *.json)         echo "application/json" ;;
+    *.txt|*.log)    echo "text/plain" ;;
+    *.md)           echo "text/markdown" ;;
+    *.csv)          echo "text/csv" ;;
+    *)              echo "application/octet-stream" ;;
+  esac
+}
+
+# Run a curl call. Body always goes to stdout. Non-2xx → exit 1 (with
+# HTTP code on stderr); 2xx → return 0.
+api_call() {
+  local method="$1"; shift
+  local path="$1"; shift
+  local tmp code body
+  tmp=$(mktemp)
+  code=$(curl -sS -o "$tmp" -w "%{http_code}" -X "$method" "$API$path" \
+    -H "Authorization: Bearer $PIDGIN_API_KEY" "$@")
+  body=$(cat "$tmp")
+  rm -f "$tmp"
+  [ -n "$body" ] && printf '%s\n' "$body"
+  if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+    return 0
+  fi
+  echo "pidgin: HTTP $code" >&2
+  exit 1
+}
+
+cmd="${1:-}"
+[ -n "$cmd" ] || { usage; exit 2; }
+shift
+
+case "$cmd" in
+  me)
+    api_call GET /v1/me
+    ;;
+
+  upload)
+    [ $# -ge 1 ] || { usage; exit 2; }
+    path="$1"; shift
+    respond=""
+    filename=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --respond)  respond=1; shift ;;
+        --filename) filename="$2"; shift 2 ;;
+        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
+    [ -n "$filename" ] || filename=$(basename "$path")
+    ct=$(detect_ct "$filename")
+    args=(
+      -H "X-Filename: $filename"
+      -H "Content-Type: $ct"
+      --data-binary "@$path"
+    )
+    [ -n "$respond" ] && args+=(-H "X-Pidgin-Channel: respond")
+    api_call POST /v1/items "${args[@]}"
+    ;;
+
+  update)
+    [ $# -ge 2 ] || { usage; exit 2; }
+    id="$1"; path="$2"; shift 2
+    filename=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --filename) filename="$2"; shift 2 ;;
+        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
+    [ -n "$filename" ] || filename=$(basename "$path")
+    ct=$(detect_ct "$filename")
+    api_call PUT "/v1/items/$id" \
+      -H "X-Filename: $filename" \
+      -H "Content-Type: $ct" \
+      --data-binary "@$path"
+    ;;
+
+  list)
+    limit=20
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --limit) limit="$2"; shift 2 ;;
+        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    api_call GET "/v1/items?limit=$limit"
+    ;;
+
+  delete)
+    [ $# -ge 1 ] || { usage; exit 2; }
+    id="$1"; shift
+    version=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --version) version="$2"; shift 2 ;;
+        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    if [ -n "$version" ]; then
+      api_call DELETE "/v1/items/$id/versions/$version"
+    else
+      api_call DELETE "/v1/items/$id"
+    fi
+    ;;
+
+  wait)
+    [ $# -ge 1 ] || { usage; exit 2; }
+    handle="$1"
+    while :; do
+      tmp=$(mktemp)
+      code=$(curl -sS -o "$tmp" -w "%{http_code}" "$API/v1/channels/$handle/wait" \
+        -H "Authorization: Bearer $PIDGIN_API_KEY")
+      body=$(cat "$tmp")
+      rm -f "$tmp"
+      case "$code" in
+        204) continue ;;
+        200) printf '%s\n' "$body"; exit 0 ;;
+        *)
+          [ -n "$body" ] && printf '%s\n' "$body"
+          echo "pidgin: HTTP $code" >&2
+          exit 1
+          ;;
+      esac
+    done
+    ;;
+
+  abandon)
+    [ $# -ge 1 ] || { usage; exit 2; }
+    handle="$1"
+    api_call POST "/v1/channels/$handle/abandon"
+    ;;
+
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+
+  *)
+    echo "pidgin: unknown command: $cmd" >&2
+    usage
+    exit 2
+    ;;
+esac
