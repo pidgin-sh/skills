@@ -1,25 +1,36 @@
 # pidgin skills
 
-Claude Code skills for [pidgin](https://pidgin.sh) — the service for sharing static artifacts (HTML, images, PDFs, plots, reports) by URL.
+Cross-agent skills for [pidgin](https://pidgin.sh) — the service for sharing static artifacts (HTML, images, PDFs, plots, reports) by URL.
+
+These skills follow the [Agent Skills specification](https://agentskills.io) and work with Claude Code, Cursor, Codex, Gemini CLI, OpenCode, Windsurf, and [50+ other coding agents](https://github.com/vercel-labs/skills#supported-agents).
 
 ## Available skills
 
 | Skill | Description |
 |--|--|
-| [`pidgin-share`](./pidgin-share) | Upload a local file to pidgin and get back a public unlisted URL on `<subdomain>.pidgin.sh`. |
+| [`pidgin-share`](./skills/pidgin-share) | Upload a local file to pidgin and get back a public unlisted URL on `<subdomain>.pidgin.sh`. |
 
 ## Install
 
-Each skill lives in its own subdirectory. To install a skill into Claude Code, symlink (or copy) its directory under `~/.claude/skills/`.
-
-For `pidgin-share`:
+Use the [`skills`](https://github.com/vercel-labs/skills) CLI — it auto-detects which agents you have installed and writes to the right paths:
 
 ```bash
-git clone https://github.com/pidgin-sh/skills.git ~/code/pidgin-skills
-ln -s ~/code/pidgin-skills/pidgin-share ~/.claude/skills/pidgin-share
+npx skills add pidgin-sh/skills
 ```
 
-Use `cp -R` instead of `ln -s` if you prefer a copy. Restart Claude Code after installing.
+To install globally (available to all projects) instead of per-project:
+
+```bash
+npx skills add pidgin-sh/skills -g
+```
+
+To target a specific agent:
+
+```bash
+npx skills add pidgin-sh/skills -a claude-code -g
+```
+
+Run `npx skills add pidgin-sh/skills --list` to preview without installing.
 
 ## Prerequisites
 
