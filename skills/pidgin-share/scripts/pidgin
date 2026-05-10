@@ -200,6 +200,22 @@ api_call() {
   exit 1
 }
 
+# Like api_call, but stores the body in __PIDGIN_RESP_BODY and the HTTP code in
+# __PIDGIN_RESP_CODE, then returns 0. Caller decides what to do with non-2xx.
+__PIDGIN_RESP_BODY=""
+__PIDGIN_RESP_CODE=""
+api_call_capture() {
+  local method="$1"; shift
+  local path="$1"; shift
+  local tmp
+  tmp=$(mktemp)
+  __PIDGIN_RESP_CODE=$(curl -sS -o "$tmp" -w "%{http_code}" -X "$method" "$API$path" \
+    -H "Authorization: Bearer $PIDGIN_API_KEY" "$@")
+  __PIDGIN_RESP_BODY=$(cat "$tmp")
+  rm -f "$tmp"
+  return 0
+}
+
 if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
   cmd="${1:-}"
   [ -n "$cmd" ] || { usage; exit 2; }
@@ -238,7 +254,14 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
       fi
       [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
-      api_call POST /v1/items "${args[@]}"
+      api_call_capture POST /v1/items "${args[@]}"
+      [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+      if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
+        record_upload_success "$__PIDGIN_RESP_BODY"
+        exit 0
+      fi
+      echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+      exit 1
       ;;
 
     update)
@@ -268,7 +291,14 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
       fi
       [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
-      api_call PUT "/v1/items/$id" "${args[@]}"
+      api_call_capture PUT "/v1/items/$id" "${args[@]}"
+      [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+      if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
+        record_upload_success "$__PIDGIN_RESP_BODY"
+        exit 0
+      fi
+      echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+      exit 1
       ;;
 
     list)
