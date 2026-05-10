@@ -94,6 +94,81 @@ append_log() {
   fi
 }
 
+# Extract a top-level scalar string field. Echoes value (no quotes) or empty.
+_json_str() {
+  local body="$1" key="$2"
+  printf '%s' "$body" | sed -n 's/.*"'"$key"'":"\([^"]*\)".*/\1/p' | head -n1
+}
+
+# Extract a top-level scalar number field. "null" → "null", missing → empty.
+# Checks null first to avoid greedy-matching a numeric value from a nested object.
+_json_num() {
+  local body="$1" key="$2"
+  local result
+  result=$(printf '%s' "$body" | sed -n 's/.*"'"$key"'":null.*/null/p' | head -n1)
+  if [ -z "$result" ]; then
+    result=$(printf '%s' "$body" | sed -n 's/.*"'"$key"'":\([0-9][0-9]*\).*/\1/p' | head -n1)
+  fi
+  printf '%s' "$result"
+}
+
+# Extract a nested string: "<container>":{ ... "<key>":"<val>" ... }.
+_json_nested_str() {
+  local body="$1" container="$2" key="$3"
+  printf '%s' "$body" | sed -n 's/.*"'"$container"'":{[^}]*"'"$key"'":"\([^"]*\)".*/\1/p' | head -n1
+}
+
+# JSON-escape a string value (backslash, double-quote). No surrounding quotes.
+_json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '%s' "$s"
+}
+
+# Append a kind=upload record. Argument: the upload response body (JSON).
+record_upload_success() {
+  local body="$1"
+  local item_id url filename expires channel_handle cohort_id ts cwd_esc
+
+  item_id=$(_json_str "$body" "id")
+  url=$(_json_str "$body" "url")
+  filename=$(_json_str "$body" "current_filename")
+  expires=$(_json_num "$body" "expires_at")
+  channel_handle=$(_json_nested_str "$body" "channel" "handle")
+  cohort_id=$(_json_nested_str "$body" "cohort" "id")
+
+  if [ -z "$item_id" ] || [ -z "$url" ]; then
+    echo "pidgin: could not parse upload response for log (item_id/url missing)" >&2
+    return 0
+  fi
+
+  ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  cwd_esc=$(_json_escape "${PWD:-}")
+
+  local line='{'
+  line+='"ts":"'"$ts"'",'
+  line+='"cwd":"'"$cwd_esc"'",'
+  line+='"kind":"upload",'
+  line+='"item_id":"'"$item_id"'",'
+  line+='"url":"'"$url"'",'
+  line+='"filename":"'"$filename"'",'
+  if [ -z "$expires" ] || [ "$expires" = "null" ]; then
+    line+='"expires_at":null'
+  else
+    line+='"expires_at":'"$expires"
+  fi
+  if [ -n "$channel_handle" ]; then
+    line+=',"channel_handle":"'"$channel_handle"'"'
+  fi
+  if [ -n "$cohort_id" ]; then
+    line+=',"cohort_id":"'"$cohort_id"'"'
+  fi
+  line+='}'
+
+  append_log "$line"
+}
+
 # Run a curl call. Body always goes to stdout. Non-2xx → exit 1 (with
 # HTTP code on stderr); 2xx → return 0.
 api_call() {
