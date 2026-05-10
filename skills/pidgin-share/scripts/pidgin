@@ -97,7 +97,7 @@ append_log() {
 # Extract a top-level scalar string field. Echoes value (no quotes) or empty.
 _json_str() {
   local body="$1" key="$2"
-  printf '%s' "$body" | sed -n 's/.*"'"$key"'":"\([^"]*\)".*/\1/p' | head -n1
+  printf '%s' "$body" | sed -n 's/^{[^{]*"'"$key"'":"\([^"]*\)".*/\1/p' | head -n1
 }
 
 # Extract a top-level scalar number field. "null" → "null", missing → empty.
@@ -105,9 +105,9 @@ _json_str() {
 _json_num() {
   local body="$1" key="$2"
   local result
-  result=$(printf '%s' "$body" | sed -n 's/.*"'"$key"'":null.*/null/p' | head -n1)
+  result=$(printf '%s' "$body" | sed -n 's/^{[^{]*"'"$key"'":null[,}].*/null/p' | head -n1)
   if [ -z "$result" ]; then
-    result=$(printf '%s' "$body" | sed -n 's/.*"'"$key"'":\([0-9][0-9]*\).*/\1/p' | head -n1)
+    result=$(printf '%s' "$body" | sed -n 's/^{[^{]*"'"$key"'":\([0-9][0-9]*\).*/\1/p' | head -n1)
   fi
   printf '%s' "$result"
 }

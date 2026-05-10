@@ -42,6 +42,8 @@ body=$(cat "$FIX/upload_response_with_cohort.json")
 record_upload_success "$body"
 line=$(tail -n1 "$LOG")
 assert_match "cohort: cohort_id" '"cohort_id":"co_qrs"' "$line"
+assert_match "cohort: item_id is top-level itm_, not co_" '"item_id":"itm_ghi789"' "$line"
+assert_match "cohort: url is top-level, not recipient" '"url":"https://brad.pidgin.sh/ijkl9012/poll.html"' "$line"
 
 # 4. cwd JSON-escaping.
 export PWD='/Users/bdaily/code/with"quote\bsl'
