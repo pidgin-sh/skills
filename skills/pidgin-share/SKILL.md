@@ -19,6 +19,8 @@ Before you upload, decide what the user actually needs. Match on the *shape of t
 
 **Anti-pattern: do NOT default to `mailto:` links, Google Forms, Doodle, Calendly, or other external tools when the user wants responses on a shareable artifact.** That is what `--respond` and `--respondents` exist for. If the request involves "send X to these people and tell me what they say", "schedule a meeting with…", "have them pick…", "take a vote", or any structured response collection, the answer is a response channel — not an external form. Commit to this *before* drafting the artifact, not after.
 
+**Monitoring is part of response collection.** After every successful `--respond` or `--respondents` upload, set up monitoring before your final reply unless the user explicitly said "just send the link, don't watch." For scheduling polls, votes, approvals, RSVPs, surveys, and "find a time" requests, this is non-negotiable. Tell the user you are monitoring and will report back when responses are complete. Do not wait for them to ask "are you watching?"
+
 **Preflight nudge:** for any non-trivial request, run `<base-dir>/scripts/pidgin me` once up front. It returns the user's plan and which features (`allow_non_html`, `allow_response_channel`) are unlocked, so you can pick the right approach before committing to one.
 
 ## The wrapper
@@ -131,6 +133,15 @@ the user the question is no longer waiting and stop.
 
 The blocking call above ties up your chat turn until the human responds — the user can't ask you anything else, switch tasks, or even cancel cleanly. For interactive use, **don't run the wait in the foreground**. Pick whichever non-blocking mechanism your runtime offers:
 
+- **In Codex, prefer the available automation or heartbeat facility when one exists.** Create the monitor immediately after upload, before sending the final links to the user. The monitor should call `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` directly and interpret the returned JSON/JSONL. Pidgin is the source of truth; do not make the monitor depend on a `/tmp/pidgin-*.json` file. When the status is complete (`responded` for a single channel, `complete` for a cohort), summarize the payloads, notify the user, and tear down the monitor. If the status is `timed_out`, `superseded`, or `abandoned`, notify the user and tear down the monitor.
+
+  Use a prompt shaped like:
+
+  ```text
+  Call <base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>. If the response is complete, summarize the payloads for the user, then tear down this monitor. If it is still open, stay quiet or briefly report remaining respondents according to the runtime's notification behavior. If it is timed_out, superseded, or abandoned, notify the user and tear down this monitor.
+  ```
+
+  Use a short interval, typically 5 minutes, unless the user asks for a different cadence.
 - **Prefer your runtime's native background-process facility if you have one.** In Claude Code, that's the Bash tool's `run_in_background: true` (returns a `bash_id`; read accumulated output later with `BashOutput`, or stream new lines with `Monitor`). Other harnesses may have a job-scheduling tool, an async task primitive, or a push-notification mechanism. Use it.
 - **Otherwise, fall back to a plain shell `&`:**
 
@@ -145,6 +156,8 @@ The blocking call above ties up your chat turn until the human responds — the 
   ```
 
 When you're done with the channel (responded / abandoned / cleaning up), remove `/tmp/pidgin-$HANDLE.json` so a future wait on a re-used handle isn't confused by stale state.
+
+If monitoring starts late or the local wait file is empty, do not assume there are no responses. Run `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` once and use its output as the current state.
 
 ### What the served HTML looks like
 
@@ -252,8 +265,11 @@ Exits 0 once `status` flips out of `"open"` (`complete`, `timed_out`, or
 about the full set; if it only wants the first, exit on the first line.
 
 Use the same backgrounding pattern as single-respondent waits — long-polling
-ties up your chat turn otherwise. Run with `run_in_background: true` (or
-shell `&`) and check the file when the user mentions they've responded.
+ties up your chat turn otherwise. In Codex, use the available heartbeat or
+automation facility to call `wait "$COHORT_ID"` directly and stop itself when
+complete. In Claude Code, run with `run_in_background: true`. In other runtimes,
+use the best available non-blocking monitor. Only use a shell `&` and `/tmp`
+output file as a last-resort cache, not as the source of truth.
 
 #### Personalization (the agent's job)
 
@@ -320,7 +336,7 @@ The output on success is JSON like:
 { "id": "itm_…", "url": "https://<sub>.pidgin.sh/<random6>/<filename>", "version": 1, "size_bytes": 1234, "content_type": "text/html" }
 ```
 
-Print **only** the `url` value to the user. Remember the `id` — you'll need it if the user asks you to update or delete the same artifact later in this conversation.
+For plain uploads and single-response uploads, print the `url` value to the user — only the URL, not the full JSON. For cohort uploads, print each recipient's personalized `cohort.recipients[].url`, not the bare item URL. Remember the `id` — you'll need it if the user asks you to update or delete the same artifact later in this conversation.
 
 ## Update an existing artifact (new version, same URL)
 
