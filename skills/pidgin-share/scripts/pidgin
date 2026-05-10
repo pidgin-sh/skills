@@ -51,6 +51,49 @@ detect_ct() {
   esac
 }
 
+# Resolve the log path. Honors $PIDGIN_LOG_DIR; falls back to $HOME/.pidgin,
+# then $XDG_STATE_HOME/pidgin. Returns non-zero if none resolvable.
+log_path() {
+  local dir
+  if [ -n "${PIDGIN_LOG_DIR:-}" ]; then
+    dir="$PIDGIN_LOG_DIR"
+  elif [ -n "${HOME:-}" ]; then
+    dir="$HOME/.pidgin"
+  elif [ -n "${XDG_STATE_HOME:-}" ]; then
+    dir="$XDG_STATE_HOME/pidgin"
+  else
+    return 1
+  fi
+  printf '%s/uploads.jsonl' "$dir"
+}
+
+# Append one JSON line to the local log. Best-effort: any failure prints a
+# one-line warning to stderr and returns 0 so the calling op is unaffected.
+append_log() {
+  local line="$1"
+  local path dir
+  path=$(log_path) || {
+    echo "pidgin: could not resolve log path (no \$PIDGIN_LOG_DIR/\$HOME/\$XDG_STATE_HOME)" >&2
+    return 0
+  }
+  dir=$(dirname "$path")
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    echo "pidgin: could not create log dir $dir" >&2
+    return 0
+  fi
+  chmod 700 "$dir" 2>/dev/null || true
+  if [ ! -f "$path" ]; then
+    if ! ( umask 077 && : > "$path" ) 2>/dev/null; then
+      echo "pidgin: could not create log file $path" >&2
+      return 0
+    fi
+  fi
+  if ! printf '%s\n' "$line" >> "$path" 2>/dev/null; then
+    echo "pidgin: could not append to log $path" >&2
+    return 0
+  fi
+}
+
 # Run a curl call. Body always goes to stdout. Non-2xx → exit 1 (with
 # HTTP code on stderr); 2xx → return 0.
 api_call() {
