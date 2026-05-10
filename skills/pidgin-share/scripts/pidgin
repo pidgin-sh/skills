@@ -323,10 +323,20 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         esac
       done
       if [ -n "$version" ]; then
-        api_call DELETE "/v1/items/$id/versions/$version"
+        api_call_capture DELETE "/v1/items/$id/versions/$version"
       else
-        api_call DELETE "/v1/items/$id"
+        api_call_capture DELETE "/v1/items/$id"
       fi
+      [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+      if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
+        # Only tombstone full-item deletes, not version deletes.
+        if [ -z "$version" ]; then
+          record_delete_success "$id"
+        fi
+        exit 0
+      fi
+      echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+      exit 1
       ;;
 
     check)
