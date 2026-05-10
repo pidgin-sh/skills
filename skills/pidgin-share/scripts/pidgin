@@ -473,6 +473,7 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         printf '%s\t%s\n' "$epoch" "$jsonline"
       done < "$log" > "$enriched"
 
+      awk_out=$(mktemp)
       awk -F '\t' \
           -v deleted="$deleted" \
           -v use_cwd="$use_cwd" \
@@ -562,15 +563,18 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
           }
           if (json_mode) printf "]\n"
         }
-      ' "$enriched"
+      ' "$enriched" > "$awk_out"
 
-      # Friendly message if everything filtered out and not in --json mode.
-      if [ "$json_mode" -eq 0 ]; then
-        if ! grep -qE '"kind":"upload"' "$log"; then
+      if [ "$json_mode" -eq 1 ]; then
+        cat "$awk_out"
+      else
+        if [ -s "$awk_out" ]; then
+          cat "$awk_out"
+        else
           echo "pidgin: no recent uploads logged" >&2
         fi
       fi
-      rm -f "$enriched"
+      rm -f "$awk_out" "$enriched"
       exit 0
       ;;
 

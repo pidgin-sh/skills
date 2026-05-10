@@ -64,4 +64,15 @@ rc=$?
 assert_eq "exit 0 on empty log" "0" "$rc"
 assert_match "friendly message on empty log" "no recent uploads" "$err"
 
+# 8. Log has uploads, but cwd filter excludes everything.
+cp "$TESTS_DIR/fixtures/sample_log.jsonl" "$PIDGIN_LOG_DIR/uploads.jsonl"
+err=$(cd /tmp && bash "$SCRIPT" recent --since 1h 2>&1 >/dev/null)
+rc=$?
+assert_eq "exit 0 when filters exclude all" "0" "$rc"
+assert_match "friendly message when filters exclude all" "no recent uploads" "$err"
+
+# 9. Same case, --json mode emits [] (no friendly message).
+out=$(cd /tmp && bash "$SCRIPT" recent --since 1h --json 2>&1)
+assert_eq "--json emits empty array when filters exclude all" "[]" "$out"
+
 report_and_exit
