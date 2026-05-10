@@ -40,7 +40,7 @@ Behavior:
 - Prints the API JSON response on stdout.
 - On HTTP non-2xx, the response body (which is `{ "error": ..., "message": ... }`) still goes to stdout, the HTTP code goes to stderr, and the script exits 1. Parse stdout with `jq` to get `error`/`message`.
 
-Subcommands: `me`, `upload`, `update`, `list`, `delete`, `wait`, `abandon`. Run the script with `--help` for the full signature.
+Subcommands: `me`, `upload`, `update`, `list`, `delete`, `check`, `wait`, `abandon`. Run the script with `--help` for the full signature.
 
 ## Prerequisites
 
@@ -131,14 +131,42 @@ The script long-polls until the channel closes, then prints the final 200 body a
 Branch on `status`. On `responded`, act on `payload`. On any other status, tell
 the user the question is no longer waiting and stop.
 
-### Wait without blocking the conversation
+### Check without blocking
 
-The blocking call above ties up your chat turn until the human responds — the user can't ask you anything else, switch tasks, or even cancel cleanly. For interactive use, prefer a notification-capable non-blocking mechanism when the runtime offers one. If it does not, be explicit about the limitation before choosing a foreground wait or a passive cache.
+For status questions, or when the runtime cannot notify the user after this
+turn, use `check` instead of `wait`:
+
+```bash
+<base-dir>/scripts/pidgin check "$HANDLE_OR_COHORT_ID"
+```
+
+`check` makes one bounded API call and exits immediately. For a single
+recipient, it prints either the final response body or `{ "status": "open" }`.
+For a cohort, it always prints the current snapshot — every response received
+so far plus the labels still outstanding:
+
+```json
+{ "status": "open", "responses": [], "next": 0, "remaining": ["jane","mark","rick"] }
+```
+
+In Codex CLI, this is the default ergonomic path: upload, print the links, save
+the `channel.handle` or `cohort.id` in the conversation, and tell the user to
+ask for a check when they want status. When the user asks "has anyone
+responded?", run `check`, not `wait`. Do not start `pidgin wait ... &` in Codex
+unless the user explicitly asks for a passive local cache; detached shell jobs
+do not wake Codex and their output can be invisible or stale.
+
+### Monitor without blocking
+
+The blocking `wait` call ties up the chat turn until the human responds. Only
+use it directly when the user has agreed to wait in the foreground, or when the
+runtime has a real notification-capable background mechanism.
 
 - **First decide whether the runtime can notify the user after this turn.** A valid monitor must run `pidgin wait`, observe the final status, and send a follow-up message without the user prompting again. If the runtime has no wakeup, heartbeat, scheduled task, push notification, or agent callback facility, non-blocking active monitoring is not available. Do not imply otherwise.
-- **In Codex, use a real automation, heartbeat, or callback facility only when one is actually available in the toolset.** Create the monitor immediately after upload, before sending the final links to the user. The monitor should call `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` directly and interpret the returned JSON/JSONL. Pidgin is the source of truth; do not make the monitor depend on a `/tmp/pidgin-*.json` file. When the status is complete (`responded` for a single channel, `complete` for a cohort), summarize the payloads, notify the user, and tear down the monitor. If the status is `timed_out`, `superseded`, or `abandoned`, notify the user and tear down the monitor.
+- **In Codex CLI, default to `check` on demand.** Codex can run commands and can resume a still-running tool session while the turn is active, but a detached shell background job is not a user notification path. If you cannot name a real callback/automation facility in the current toolset, do not claim active monitoring.
+- **When a real monitor exists, use `wait`.** Create the monitor immediately after upload, before sending the final links to the user. The monitor should call `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` directly and interpret the returned JSON/JSONL. Pidgin is the source of truth; do not make the monitor depend on a `/tmp/pidgin-*.json` file. When the status is complete (`responded` for a single channel, `complete` for a cohort), summarize the payloads, notify the user, and tear down the monitor. If the status is `timed_out`, `superseded`, or `abandoned`, notify the user and tear down the monitor.
 
-  Use a prompt shaped like:
+  Use a monitor prompt shaped like:
 
   ```text
   Call <base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>. If the response is complete, summarize the payloads for the user, then tear down this monitor. If it is still open, stay quiet or briefly report remaining respondents according to the runtime's notification behavior. If it is timed_out, superseded, or abandoned, notify the user and tear down this monitor.
@@ -146,7 +174,7 @@ The blocking call above ties up your chat turn until the human responds — the 
 
   Use a short interval, typically 5 minutes, unless the user asks for a different cadence.
 - **Prefer your runtime's native background-process facility if you have one.** In Claude Code, the active path is `run_in_background: true` *plus* the `Monitor` tool — each new stdout line from the background bash wakes the agent, so the final `pidgin wait` payload arrives as a notification. Reading the same bash with `BashOutput` alone is polling, not notification; treat that the same as the passive-cache fallback below. Other harnesses may have a job-scheduling tool, an async task primitive, or a push-notification mechanism. Use it.
-- **If there is no notification-capable monitor, use a plain shell `&` only as a passive cache, not as active monitoring:**
+- **If there is no notification-capable monitor and the user explicitly wants a passive cache, use a plain shell `&` only as that cache:**
 
   ```bash
   <base-dir>/scripts/pidgin wait "$HANDLE" > "/tmp/pidgin-$HANDLE.json" 2>&1 &
@@ -161,15 +189,13 @@ The blocking call above ties up your chat turn until the human responds — the 
 
   If the file contains `HTTP 000`, DNS errors, auth errors, or any other wrapper failure, fix that failure or surface it to the user. In Codex, sandboxed network failures often require rerunning the wait with network approval.
 
-  If the passive wait starts cleanly, be explicit with the user: "I started a passive local wait, but this runtime cannot notify you automatically; ask me to check it later." Then check whenever it makes sense — when the user mentions they've responded, or at the top of a new turn after a quiet stretch:
+  If the passive wait starts cleanly, be explicit with the user: "I started a passive local wait, but this runtime cannot notify you automatically; ask me to check it later." When the user asks for status, prefer `check` against pidgin as the source of truth; use the local file only as additional context.
 
   ```bash
   [ -s "/tmp/pidgin-$HANDLE.json" ] && cat "/tmp/pidgin-$HANDLE.json" || echo "still waiting"
   ```
 
 When you're done with the channel (responded / abandoned / cleaning up), remove `/tmp/pidgin-$HANDLE.json` so a future wait on a re-used handle isn't confused by stale state.
-
-If monitoring starts late or the local wait file is empty, do not assume there are no responses. Run `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` once and use its output as the current state.
 
 ### What the served HTML looks like
 
@@ -276,14 +302,18 @@ Exits 0 once `status` flips out of `"open"` (`complete`, `timed_out`, or
 `superseded`). The agent should accumulate `responses` across lines if it cares
 about the full set; if it only wants the first, exit on the first line.
 
-Use the same backgrounding pattern as single-respondent waits — long-polling
-ties up your chat turn otherwise. In Codex, use the available heartbeat or
-automation facility to call `wait "$COHORT_ID"` directly and stop itself when
-complete. In Claude Code, run with `run_in_background: true` and watch the
-background bash with `Monitor` so each new JSONL line wakes the agent;
-`BashOutput` alone is polling, not notification. In other runtimes, use the
-best available non-blocking monitor. Only use a shell `&` and `/tmp`
-output file as a last-resort cache, not as the source of truth.
+For non-blocking status, use:
+
+```bash
+<base-dir>/scripts/pidgin check "$COHORT_ID"
+```
+
+Use `wait` only for foreground waiting or a real notification-capable monitor.
+In Codex CLI, use `check` when the user asks for progress; it returns all
+responses known so far without leaving a live command session behind. In Claude
+Code, run `wait` with `run_in_background: true` and watch it with `Monitor` so
+each new JSONL line wakes the agent; `BashOutput` alone is polling, not
+notification. In other runtimes, use the best available non-blocking monitor.
 
 #### Personalization (the agent's job)
 

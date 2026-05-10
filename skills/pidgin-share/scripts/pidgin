@@ -20,6 +20,7 @@ Usage:
   pidgin update <id> <path> [--respond | --respondents=a,b,c] [--filename NAME]
   pidgin list [--limit N]
   pidgin delete <id> [--version N]
+  pidgin check <id>            # non-blocking status check
   pidgin wait <id>             # ch_… single-respondent, co_… cohort
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
 EOF
@@ -159,6 +160,15 @@ case "$cmd" in
     else
       api_call DELETE "/v1/items/$id"
     fi
+    ;;
+
+  check)
+    [ $# -ge 1 ] || { usage; exit 2; }
+    id="$1"
+    case "$id" in
+      co_*) api_call GET "/v1/cohorts/$id/wait?since=0&peek=1" ;;
+      *)    api_call GET "/v1/channels/$id/wait?peek=1" ;;
+    esac
     ;;
 
   wait)
