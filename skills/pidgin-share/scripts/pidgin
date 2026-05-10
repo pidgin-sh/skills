@@ -3,6 +3,12 @@
 # stdout. Exit non-zero on HTTP non-2xx; the response body (which contains
 # {error, message}) still goes to stdout so the caller can parse it.
 
+# Allow tests to source this file without running the dispatcher.
+if [ "${1:-}" = "--source-only" ]; then
+  __PIDGIN_SOURCE_ONLY=1
+  shift
+fi
+
 set -u
 
 API="${PIDGIN_API_BASE:-https://api.pidgin.sh}"
@@ -64,186 +70,188 @@ api_call() {
   exit 1
 }
 
-cmd="${1:-}"
-[ -n "$cmd" ] || { usage; exit 2; }
-shift
+if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
+  cmd="${1:-}"
+  [ -n "$cmd" ] || { usage; exit 2; }
+  shift
 
-case "$cmd" in
-  me)
-    api_call GET /v1/me
-    ;;
+  case "$cmd" in
+    me)
+      api_call GET /v1/me
+      ;;
 
-  upload)
-    [ $# -ge 1 ] || { usage; exit 2; }
-    path="$1"; shift
-    respond=""
-    recipients=""
-    filename=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --respond)        respond=1; shift ;;
-        --respondents=*)  recipients="${1#--respondents=}"; shift ;;
-        --respondents)    recipients="$2"; shift 2 ;;
-        --filename)       filename="$2"; shift 2 ;;
-        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+    upload)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      path="$1"; shift
+      respond=""
+      recipients=""
+      filename=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --respond)        respond=1; shift ;;
+          --respondents=*)  recipients="${1#--respondents=}"; shift ;;
+          --respondents)    recipients="$2"; shift 2 ;;
+          --filename)       filename="$2"; shift 2 ;;
+          *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+        esac
+      done
+      [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
+      [ -n "$filename" ] || filename=$(basename "$path")
+      ct=$(detect_ct "$filename")
+      args=(
+        -H "X-Filename: $filename"
+        -H "Content-Type: $ct"
+        --data-binary "@$path"
+      )
+      # --respondents implies channel-respond; setting it without --respond is fine.
+      if [ -n "$recipients" ] || [ -n "$respond" ]; then
+        args+=(-H "X-Pidgin-Channel: respond")
+      fi
+      [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
+      api_call POST /v1/items "${args[@]}"
+      ;;
+
+    update)
+      [ $# -ge 2 ] || { usage; exit 2; }
+      id="$1"; path="$2"; shift 2
+      respond=""
+      recipients=""
+      filename=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --respond)        respond=1; shift ;;
+          --respondents=*)  recipients="${1#--respondents=}"; shift ;;
+          --respondents)    recipients="$2"; shift 2 ;;
+          --filename)       filename="$2"; shift 2 ;;
+          *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+        esac
+      done
+      [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
+      [ -n "$filename" ] || filename=$(basename "$path")
+      ct=$(detect_ct "$filename")
+      args=(
+        -H "X-Filename: $filename"
+        -H "Content-Type: $ct"
+        --data-binary "@$path"
+      )
+      if [ -n "$recipients" ] || [ -n "$respond" ]; then
+        args+=(-H "X-Pidgin-Channel: respond")
+      fi
+      [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
+      api_call PUT "/v1/items/$id" "${args[@]}"
+      ;;
+
+    list)
+      limit=20
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --limit) limit="$2"; shift 2 ;;
+          *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+        esac
+      done
+      api_call GET "/v1/items?limit=$limit"
+      ;;
+
+    delete)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      id="$1"; shift
+      version=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --version) version="$2"; shift 2 ;;
+          *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+        esac
+      done
+      if [ -n "$version" ]; then
+        api_call DELETE "/v1/items/$id/versions/$version"
+      else
+        api_call DELETE "/v1/items/$id"
+      fi
+      ;;
+
+    check)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      id="$1"
+      case "$id" in
+        co_*) api_call GET "/v1/cohorts/$id/wait?since=0&peek=1" ;;
+        *)    api_call GET "/v1/channels/$id/wait?peek=1" ;;
       esac
-    done
-    [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
-    [ -n "$filename" ] || filename=$(basename "$path")
-    ct=$(detect_ct "$filename")
-    args=(
-      -H "X-Filename: $filename"
-      -H "Content-Type: $ct"
-      --data-binary "@$path"
-    )
-    # --respondents implies channel-respond; setting it without --respond is fine.
-    if [ -n "$recipients" ] || [ -n "$respond" ]; then
-      args+=(-H "X-Pidgin-Channel: respond")
-    fi
-    [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
-    api_call POST /v1/items "${args[@]}"
-    ;;
+      ;;
 
-  update)
-    [ $# -ge 2 ] || { usage; exit 2; }
-    id="$1"; path="$2"; shift 2
-    respond=""
-    recipients=""
-    filename=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --respond)        respond=1; shift ;;
-        --respondents=*)  recipients="${1#--respondents=}"; shift ;;
-        --respondents)    recipients="$2"; shift 2 ;;
-        --filename)       filename="$2"; shift 2 ;;
-        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+    wait)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      id="$1"
+      case "$id" in
+        co_*)
+          # Cohort wait: long-poll with offset, accumulate responses, exit when
+          # status flips out of "open". Output is one JSON document per long-poll
+          # round so the agent sees responses as they arrive.
+          since=0
+          while :; do
+            tmp=$(mktemp)
+            code=$(curl -sS -o "$tmp" -w "%{http_code}" "$API/v1/cohorts/$id/wait?since=$since" \
+              -H "Authorization: Bearer $PIDGIN_API_KEY")
+            body=$(cat "$tmp")
+            rm -f "$tmp"
+            case "$code" in
+              204) continue ;;
+              200)
+                printf '%s\n' "$body"
+                # Parse status + next without jq dependency: grep the JSON keys.
+                status=$(printf '%s' "$body" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
+                next=$(printf '%s' "$body" | sed -n 's/.*"next":\([0-9]*\).*/\1/p')
+                if [ "$status" != "open" ]; then exit 0; fi
+                # Still open: bump since to the new offset and keep polling.
+                since="${next:-$since}"
+                ;;
+              *)
+                [ -n "$body" ] && printf '%s\n' "$body"
+                echo "pidgin: HTTP $code" >&2
+                exit 1
+                ;;
+            esac
+          done
+          ;;
+        *)
+          # Single-respondent wait (ch_… or any non-co_ id).
+          while :; do
+            tmp=$(mktemp)
+            code=$(curl -sS -o "$tmp" -w "%{http_code}" "$API/v1/channels/$id/wait" \
+              -H "Authorization: Bearer $PIDGIN_API_KEY")
+            body=$(cat "$tmp")
+            rm -f "$tmp"
+            case "$code" in
+              204) continue ;;
+              200) printf '%s\n' "$body"; exit 0 ;;
+              *)
+                [ -n "$body" ] && printf '%s\n' "$body"
+                echo "pidgin: HTTP $code" >&2
+                exit 1
+                ;;
+            esac
+          done
+          ;;
       esac
-    done
-    [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
-    [ -n "$filename" ] || filename=$(basename "$path")
-    ct=$(detect_ct "$filename")
-    args=(
-      -H "X-Filename: $filename"
-      -H "Content-Type: $ct"
-      --data-binary "@$path"
-    )
-    if [ -n "$recipients" ] || [ -n "$respond" ]; then
-      args+=(-H "X-Pidgin-Channel: respond")
-    fi
-    [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
-    api_call PUT "/v1/items/$id" "${args[@]}"
-    ;;
+      ;;
 
-  list)
-    limit=20
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --limit) limit="$2"; shift 2 ;;
-        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
+    abandon)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      id="$1"
+      case "$id" in
+        co_*) api_call POST "/v1/cohorts/$id/abandon" ;;
+        *)    api_call POST "/v1/channels/$id/abandon" ;;
       esac
-    done
-    api_call GET "/v1/items?limit=$limit"
-    ;;
+      ;;
 
-  delete)
-    [ $# -ge 1 ] || { usage; exit 2; }
-    id="$1"; shift
-    version=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --version) version="$2"; shift 2 ;;
-        *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
-      esac
-    done
-    if [ -n "$version" ]; then
-      api_call DELETE "/v1/items/$id/versions/$version"
-    else
-      api_call DELETE "/v1/items/$id"
-    fi
-    ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
 
-  check)
-    [ $# -ge 1 ] || { usage; exit 2; }
-    id="$1"
-    case "$id" in
-      co_*) api_call GET "/v1/cohorts/$id/wait?since=0&peek=1" ;;
-      *)    api_call GET "/v1/channels/$id/wait?peek=1" ;;
-    esac
-    ;;
-
-  wait)
-    [ $# -ge 1 ] || { usage; exit 2; }
-    id="$1"
-    case "$id" in
-      co_*)
-        # Cohort wait: long-poll with offset, accumulate responses, exit when
-        # status flips out of "open". Output is one JSON document per long-poll
-        # round so the agent sees responses as they arrive.
-        since=0
-        while :; do
-          tmp=$(mktemp)
-          code=$(curl -sS -o "$tmp" -w "%{http_code}" "$API/v1/cohorts/$id/wait?since=$since" \
-            -H "Authorization: Bearer $PIDGIN_API_KEY")
-          body=$(cat "$tmp")
-          rm -f "$tmp"
-          case "$code" in
-            204) continue ;;
-            200)
-              printf '%s\n' "$body"
-              # Parse status + next without jq dependency: grep the JSON keys.
-              status=$(printf '%s' "$body" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p')
-              next=$(printf '%s' "$body" | sed -n 's/.*"next":\([0-9]*\).*/\1/p')
-              if [ "$status" != "open" ]; then exit 0; fi
-              # Still open: bump since to the new offset and keep polling.
-              since="${next:-$since}"
-              ;;
-            *)
-              [ -n "$body" ] && printf '%s\n' "$body"
-              echo "pidgin: HTTP $code" >&2
-              exit 1
-              ;;
-          esac
-        done
-        ;;
-      *)
-        # Single-respondent wait (ch_… or any non-co_ id).
-        while :; do
-          tmp=$(mktemp)
-          code=$(curl -sS -o "$tmp" -w "%{http_code}" "$API/v1/channels/$id/wait" \
-            -H "Authorization: Bearer $PIDGIN_API_KEY")
-          body=$(cat "$tmp")
-          rm -f "$tmp"
-          case "$code" in
-            204) continue ;;
-            200) printf '%s\n' "$body"; exit 0 ;;
-            *)
-              [ -n "$body" ] && printf '%s\n' "$body"
-              echo "pidgin: HTTP $code" >&2
-              exit 1
-              ;;
-          esac
-        done
-        ;;
-    esac
-    ;;
-
-  abandon)
-    [ $# -ge 1 ] || { usage; exit 2; }
-    id="$1"
-    case "$id" in
-      co_*) api_call POST "/v1/cohorts/$id/abandon" ;;
-      *)    api_call POST "/v1/channels/$id/abandon" ;;
-    esac
-    ;;
-
-  -h|--help|help)
-    usage
-    exit 0
-    ;;
-
-  *)
-    echo "pidgin: unknown command: $cmd" >&2
-    usage
-    exit 2
-    ;;
-esac
+    *)
+      echo "pidgin: unknown command: $cmd" >&2
+      usage
+      exit 2
+      ;;
+  esac
+fi
