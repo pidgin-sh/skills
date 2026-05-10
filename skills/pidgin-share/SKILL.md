@@ -19,7 +19,9 @@ Before you upload, decide what the user actually needs. Match on the *shape of t
 
 **Anti-pattern: do NOT default to `mailto:` links, Google Forms, Doodle, Calendly, or other external tools when the user wants responses on a shareable artifact.** That is what `--respond` and `--respondents` exist for. If the request involves "send X to these people and tell me what they say", "schedule a meeting with…", "have them pick…", "take a vote", or any structured response collection, the answer is a response channel — not an external form. Commit to this *before* drafting the artifact, not after.
 
-**Monitoring is part of response collection.** After every successful `--respond` or `--respondents` upload, set up monitoring before your final reply unless the user explicitly said "just send the link, don't watch." For scheduling polls, votes, approvals, RSVPs, surveys, and "find a time" requests, this is non-negotiable. Tell the user you are monitoring and will report back when responses are complete. Do not wait for them to ask "are you watching?"
+**Monitoring is part of response collection.** After every successful `--respond` or `--respondents` upload, set up monitoring before your final reply unless the user explicitly said "just send the link, don't watch." For scheduling polls, votes, approvals, RSVPs, surveys, and "find a time" requests, this is non-negotiable.
+
+Only tell the user "I am monitoring and will report back" if the current runtime has a real notification path that can wake the agent or inject a follow-up message when `pidgin wait` finishes. A detached shell command that writes to `/tmp` is only a passive cache; it does not notify the user by itself. If no real notification path exists, say that active notification is not available in this runtime and either keep the wait in the foreground with the user's consent or give the links plus the exact command/state you will check when they ask.
 
 **Preflight nudge:** for any non-trivial request, run `<base-dir>/scripts/pidgin me` once up front. It returns the user's plan and which features (`allow_non_html`, `allow_response_channel`) are unlocked, so you can pick the right approach before committing to one.
 
@@ -131,9 +133,10 @@ the user the question is no longer waiting and stop.
 
 ### Wait without blocking the conversation
 
-The blocking call above ties up your chat turn until the human responds — the user can't ask you anything else, switch tasks, or even cancel cleanly. For interactive use, **don't run the wait in the foreground**. Pick whichever non-blocking mechanism your runtime offers:
+The blocking call above ties up your chat turn until the human responds — the user can't ask you anything else, switch tasks, or even cancel cleanly. For interactive use, prefer a notification-capable non-blocking mechanism when the runtime offers one. If it does not, be explicit about the limitation before choosing a foreground wait or a passive cache.
 
-- **In Codex, prefer the available automation or heartbeat facility when one exists.** Create the monitor immediately after upload, before sending the final links to the user. The monitor should call `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` directly and interpret the returned JSON/JSONL. Pidgin is the source of truth; do not make the monitor depend on a `/tmp/pidgin-*.json` file. When the status is complete (`responded` for a single channel, `complete` for a cohort), summarize the payloads, notify the user, and tear down the monitor. If the status is `timed_out`, `superseded`, or `abandoned`, notify the user and tear down the monitor.
+- **First decide whether the runtime can notify the user after this turn.** A valid monitor must run `pidgin wait`, observe the final status, and send a follow-up message without the user prompting again. If the runtime has no wakeup, heartbeat, scheduled task, push notification, or agent callback facility, non-blocking active monitoring is not available. Do not imply otherwise.
+- **In Codex, use a real automation, heartbeat, or callback facility only when one is actually available in the toolset.** Create the monitor immediately after upload, before sending the final links to the user. The monitor should call `<base-dir>/scripts/pidgin wait <HANDLE_OR_COHORT_ID>` directly and interpret the returned JSON/JSONL. Pidgin is the source of truth; do not make the monitor depend on a `/tmp/pidgin-*.json` file. When the status is complete (`responded` for a single channel, `complete` for a cohort), summarize the payloads, notify the user, and tear down the monitor. If the status is `timed_out`, `superseded`, or `abandoned`, notify the user and tear down the monitor.
 
   Use a prompt shaped like:
 
@@ -142,14 +145,23 @@ The blocking call above ties up your chat turn until the human responds — the 
   ```
 
   Use a short interval, typically 5 minutes, unless the user asks for a different cadence.
-- **Prefer your runtime's native background-process facility if you have one.** In Claude Code, that's the Bash tool's `run_in_background: true` (returns a `bash_id`; read accumulated output later with `BashOutput`, or stream new lines with `Monitor`). Other harnesses may have a job-scheduling tool, an async task primitive, or a push-notification mechanism. Use it.
-- **Otherwise, fall back to a plain shell `&`:**
+- **Prefer your runtime's native background-process facility if you have one.** In Claude Code, the active path is `run_in_background: true` *plus* the `Monitor` tool — each new stdout line from the background bash wakes the agent, so the final `pidgin wait` payload arrives as a notification. Reading the same bash with `BashOutput` alone is polling, not notification; treat that the same as the passive-cache fallback below. Other harnesses may have a job-scheduling tool, an async task primitive, or a push-notification mechanism. Use it.
+- **If there is no notification-capable monitor, use a plain shell `&` only as a passive cache, not as active monitoring:**
 
   ```bash
   <base-dir>/scripts/pidgin wait "$HANDLE" > "/tmp/pidgin-$HANDLE.json" 2>&1 &
   ```
 
-  Then check whenever it makes sense — when the user mentions they've responded, or at the top of a new turn after a quiet stretch:
+  After starting it, check once for immediate failure before telling the user anything:
+
+  ```bash
+  sleep 1
+  [ -s "/tmp/pidgin-$HANDLE.json" ] && cat "/tmp/pidgin-$HANDLE.json" || true
+  ```
+
+  If the file contains `HTTP 000`, DNS errors, auth errors, or any other wrapper failure, fix that failure or surface it to the user. In Codex, sandboxed network failures often require rerunning the wait with network approval.
+
+  If the passive wait starts cleanly, be explicit with the user: "I started a passive local wait, but this runtime cannot notify you automatically; ask me to check it later." Then check whenever it makes sense — when the user mentions they've responded, or at the top of a new turn after a quiet stretch:
 
   ```bash
   [ -s "/tmp/pidgin-$HANDLE.json" ] && cat "/tmp/pidgin-$HANDLE.json" || echo "still waiting"
@@ -267,8 +279,10 @@ about the full set; if it only wants the first, exit on the first line.
 Use the same backgrounding pattern as single-respondent waits — long-polling
 ties up your chat turn otherwise. In Codex, use the available heartbeat or
 automation facility to call `wait "$COHORT_ID"` directly and stop itself when
-complete. In Claude Code, run with `run_in_background: true`. In other runtimes,
-use the best available non-blocking monitor. Only use a shell `&` and `/tmp`
+complete. In Claude Code, run with `run_in_background: true` and watch the
+background bash with `Monitor` so each new JSONL line wakes the agent;
+`BashOutput` alone is polling, not notification. In other runtimes, use the
+best available non-blocking monitor. Only use a shell `&` and `/tmp`
 output file as a last-resort cache, not as the source of truth.
 
 #### Personalization (the agent's job)
