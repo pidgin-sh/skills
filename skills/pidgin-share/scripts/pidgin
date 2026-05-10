@@ -169,6 +169,18 @@ record_upload_success() {
   append_log "$line"
 }
 
+# Append a kind=delete tombstone. Argument: deleted item_id.
+record_delete_success() {
+  local item_id="$1"
+  if [ -z "$item_id" ]; then
+    echo "pidgin: record_delete_success called without item_id; skipping log" >&2
+    return 0
+  fi
+  local ts
+  ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  append_log '{"ts":"'"$ts"'","kind":"delete","item_id":"'"$item_id"'"}'
+}
+
 # Run a curl call. Body always goes to stdout. Non-2xx → exit 1 (with
 # HTTP code on stderr); 2xx → return 0.
 api_call() {
