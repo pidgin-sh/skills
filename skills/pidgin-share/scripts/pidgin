@@ -29,7 +29,8 @@ Usage:
   pidgin check <id>            # non-blocking status check
   pidgin wait <id>             # ch_… single-respondent, co_… cohort
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
-  pidgin recent [--since 1h] [--cwd PATH | --all] [--limit N] [--json]
+  pidgin recent [--since 1h|24h|7d] [--all] [--limit N] [--json]
+                               # local recall: list URLs you've uploaded recently
 EOF
 }
 

@@ -1,6 +1,6 @@
 ---
 name: pidgin-share
-description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection).
+description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection). Also covers recovering URLs you've previously created but forgotten (`pidgin recent`).
 ---
 
 # pidgin-share
@@ -16,6 +16,12 @@ Before you upload, decide what the user actually needs. Match on the *shape of t
 | Just hosting an artifact for viewing | Plain upload |
 | One human needs to respond (approve, pick, fill out) | `--respond` (single channel) |
 | Multiple named humans each need to respond — "send to jane, mark, rick", "find a time with X/Y/Z", "have the team vote", "get RSVPs", "show A and B which mockup they prefer" | `--respondents=jane,mark,rick` (cohort) |
+
+## Recovering URLs you've lost
+
+If you don't remember a URL you created earlier in this conversation — for example, after context compaction — run `<base-dir>/scripts/pidgin recent`. It lists artifacts uploaded from the current working directory in the last hour, newest first. Widen with `--since 24h` or `--all` if needed; use `--json` for programmatic access. The wrapper logs successful uploads (and delete tombstones) to `~/.pidgin/uploads.jsonl` automatically — no setup, no extra calls at upload time. The log is local-only; nothing about your project paths is sent to the pidgin server.
+
+Out-of-band deletions (via the dashboard, direct `curl`, or server-side TTL purge) won't be reflected in `pidgin recent` until you `rm ~/.pidgin/uploads.jsonl`. URLs surfaced from such stale entries will 404.
 
 **Anti-pattern: do NOT default to `mailto:` links, Google Forms, Doodle, Calendly, or other external tools when the user wants responses on a shareable artifact.** That is what `--respond` and `--respondents` exist for. If the request involves "send X to these people and tell me what they say", "schedule a meeting with…", "have them pick…", "take a vote", or any structured response collection, the answer is a response channel — not an external form. Commit to this *before* drafting the artifact, not after.
 
