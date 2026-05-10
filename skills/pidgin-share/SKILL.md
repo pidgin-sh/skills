@@ -198,6 +198,8 @@ Send each recipient their own personalized URL (do NOT send the bare `url`
 field — that has no fragment and won't activate the response shim). Remember
 the `cohort.id` for the wait call.
 
+Each recipient URL is shaped `<base>#ch=<handle>&as=<label>` — share it as-is.
+
 Labels are `[A-Za-z0-9._-]{1,64}`, max 100 distinct, no duplicates. The flag
 implies `--respond`, so you don't need to pass both.
 
@@ -227,21 +229,22 @@ shell `&`) and check the file when the user mentions they've responded.
 
 #### Personalization (the agent's job)
 
-The injected shim reads the recipient handle from the URL fragment, but it
-does not know the label. To greet each recipient by name, bake a handle→label
-map into the artifact's HTML at upload time:
+Each recipient URL ends with `#ch=<handle>&as=<label>`. The artifact's HTML
+can read the label directly from `location.hash` to greet the recipient by
+name. No upload round-trip required — the agent picks the labels at upload
+time and the URL carries them to the served page.
 
 ```html
 <script>
-  var m = (location.hash || "").match(/(?:^#|&)ch=([A-Za-z0-9_]+)/);
-  // The agent fills this map in based on the cohort response.
-  var who = { "ch_aaa…": "Jane", "ch_bbb…": "Mark", "ch_ccc…": "Rick" }[m && m[1]] || "there";
+  var m = (location.hash || "").match(/(?:^#|&)as=([A-Za-z0-9._-]+)/);
+  var who = m ? m[1] : "there";
   document.getElementById('greeting').textContent = "Hi " + who + ", please review:";
 </script>
 ```
 
-Pidgin doesn't require this pattern — the artifact body is identical for every
-recipient. If the agent doesn't care about personalization, skip the map.
+If the agent doesn't want recipient names visible in URLs, pass opaque labels
+like `--respondents=r1,r2,r3` and bake the `r1 → Jane` map into the HTML
+yourself. For typical use, plain names are fine.
 
 #### Updating a cohort
 
