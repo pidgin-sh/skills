@@ -29,6 +29,7 @@ Usage:
   pidgin check <id>            # non-blocking status check
   pidgin wait <id>             # ch_… single-respondent, co_… cohort
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
+  pidgin recent [--since 1h] [--cwd PATH | --all] [--limit N] [--json]
 EOF
 }
 
@@ -411,6 +412,166 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         co_*) api_call POST "/v1/cohorts/$id/abandon" ;;
         *)    api_call POST "/v1/channels/$id/abandon" ;;
       esac
+      ;;
+
+    recent)
+      since="1h"
+      cwd_filter="$PWD"
+      use_cwd=1
+      limit=20
+      json_mode=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --since)   since="$2"; shift 2 ;;
+          --since=*) since="${1#--since=}"; shift ;;
+          --cwd)     cwd_filter="$2"; use_cwd=1; shift 2 ;;
+          --cwd=*)   cwd_filter="${1#--cwd=}"; use_cwd=1; shift ;;
+          --all)     use_cwd=0; shift ;;
+          --limit)   limit="$2"; shift 2 ;;
+          --limit=*) limit="${1#--limit=}"; shift ;;
+          --json)    json_mode=1; shift ;;
+          *) echo "pidgin: unknown flag for recent: $1" >&2; exit 2 ;;
+        esac
+      done
+
+      case "$since" in
+        *m) window_seconds=$(( ${since%m} * 60 )) ;;
+        *h) window_seconds=$(( ${since%h} * 3600 )) ;;
+        *d) window_seconds=$(( ${since%d} * 86400 )) ;;
+        *)  echo "pidgin: invalid --since value '$since' (use Nm, Nh, or Nd)" >&2; exit 2 ;;
+      esac
+
+      log=$(log_path) || { echo "pidgin: no recent uploads logged" >&2; exit 0; }
+      if [ ! -s "$log" ]; then
+        echo "pidgin: no recent uploads logged" >&2
+        exit 0
+      fi
+
+      now_epoch="${PIDGIN_NOW_EPOCH:-$(date -u +%s)}"
+      cutoff_epoch=$(( now_epoch - window_seconds ))
+
+      # Pass 1: collect tombstoned item_ids (newline-separated).
+      deleted=$(grep -E '"kind":"delete"' "$log" 2>/dev/null \
+        | sed -n 's/.*"item_id":"\([^"]*\)".*/\1/p')
+
+      # Pass 2: pre-compute epoch per upload line and pipe to awk for filtering/format.
+      # macOS `date -j -f` parses ISO 8601; Linux `date -d` is the fallback.
+      enriched=$(mktemp)
+      while IFS= read -r jsonline; do
+        [ -z "$jsonline" ] && continue
+        case "$jsonline" in
+          \{*\}) ;;            # looks like JSON object
+          *) continue ;;
+        esac
+        kind=$(printf '%s' "$jsonline" | sed -n 's/.*"kind":"\([^"]*\)".*/\1/p')
+        [ "$kind" = "upload" ] || continue
+        ts=$(printf '%s' "$jsonline" | sed -n 's/.*"ts":"\([^"]*\)".*/\1/p')
+        [ -n "$ts" ] || continue
+        epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" '+%s' 2>/dev/null) \
+          || epoch=$(date -u -d "$ts" '+%s' 2>/dev/null) \
+          || epoch=0
+        printf '%s\t%s\n' "$epoch" "$jsonline"
+      done < "$log" > "$enriched"
+
+      awk -F '\t' \
+          -v deleted="$deleted" \
+          -v use_cwd="$use_cwd" \
+          -v cwd="$cwd_filter" \
+          -v cutoff="$cutoff_epoch" \
+          -v now="$now_epoch" \
+          -v limit="$limit" \
+          -v json_mode="$json_mode" '
+        BEGIN {
+          n_del = split(deleted, _arr, "\n")
+          for (i = 1; i <= n_del; i++) if (_arr[i] != "") del[_arr[i]] = 1
+        }
+        {
+          epoch = $1 + 0
+          line = $2
+          if (epoch == 0) next
+          if (epoch < cutoff) next
+
+          item_id = ""
+          if (match(line, /"item_id":"[^"]+"/)) {
+            item_id = substr(line, RSTART, RLENGTH)
+            sub(/^"item_id":"/, "", item_id); sub(/"$/, "", item_id)
+          }
+          if (item_id in del) next
+
+          expires = -1
+          if (match(line, /"expires_at":[0-9]+/)) {
+            tok = substr(line, RSTART, RLENGTH); sub(/^"expires_at":/, "", tok)
+            expires = tok + 0
+            if (expires > 0 && expires < now) next
+          }
+
+          cwd_v = ""
+          if (match(line, /"cwd":"[^"]+"/)) {
+            cwd_v = substr(line, RSTART, RLENGTH)
+            sub(/^"cwd":"/, "", cwd_v); sub(/"$/, "", cwd_v)
+          }
+          if (use_cwd && cwd_v != cwd) next
+
+          url = filename = cohort = channel = ""
+          if (match(line, /"url":"[^"]+"/)) {
+            url = substr(line, RSTART, RLENGTH); sub(/^"url":"/, "", url); sub(/"$/, "", url)
+          }
+          if (match(line, /"filename":"[^"]+"/)) {
+            filename = substr(line, RSTART, RLENGTH); sub(/^"filename":"/, "", filename); sub(/"$/, "", filename)
+          }
+          if (match(line, /"channel_handle":"[^"]+"/)) {
+            channel = substr(line, RSTART, RLENGTH); sub(/^"channel_handle":"/, "", channel); sub(/"$/, "", channel)
+          }
+          if (match(line, /"cohort_id":"[^"]+"/)) {
+            cohort = substr(line, RSTART, RLENGTH); sub(/^"cohort_id":"/, "", cohort); sub(/"$/, "", cohort)
+          }
+
+          # Sort key: epoch desc → use (10^11 - epoch) so string sort works descending.
+          key = sprintf("%011d", 99999999999 - epoch)
+          records[key "::" NR] = epoch SUBSEP filename SUBSEP url SUBSEP channel SUBSEP cohort SUBSEP line
+          n++
+        }
+        END {
+          # Collect keys, sort ascending (gives us desc by epoch).
+          i = 0
+          for (k in records) keys[++i] = k
+          # Simple insertion sort (small n is fine).
+          for (a = 2; a <= i; a++) {
+            v = keys[a]; b = a - 1
+            while (b >= 1 && keys[b] > v) { keys[b+1] = keys[b]; b-- }
+            keys[b+1] = v
+          }
+
+          out = 0
+          if (json_mode) printf "["
+          for (a = 1; a <= i && out < limit; a++) {
+            split(records[keys[a]], parts, SUBSEP)
+            ep = parts[1]; fn = parts[2]; u = parts[3]; ch = parts[4]; co = parts[5]; raw = parts[6]
+            if (json_mode) {
+              if (out > 0) printf ","
+              printf "%s", raw
+            } else {
+              hh = int((ep % 86400) / 3600)
+              mm = int((ep % 3600) / 60)
+              extra = ""
+              if (co != "") extra = " (cohort " co ")"
+              else if (ch != "") extra = " (channel " ch ")"
+              printf "%02d:%02d  %-24s %s%s\n", hh, mm, fn, u, extra
+            }
+            out++
+          }
+          if (json_mode) printf "]\n"
+        }
+      ' "$enriched"
+
+      # Friendly message if everything filtered out and not in --json mode.
+      if [ "$json_mode" -eq 0 ]; then
+        if ! grep -qE '"kind":"upload"' "$log"; then
+          echo "pidgin: no recent uploads logged" >&2
+        fi
+      fi
+      rm -f "$enriched"
+      exit 0
       ;;
 
     -h|--help|help)

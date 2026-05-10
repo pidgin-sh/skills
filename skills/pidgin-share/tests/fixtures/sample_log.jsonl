@@ -1,0 +1,10 @@
+{"ts":"2026-05-10T14:55:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_aaa","url":"https://example.pidgin.sh/aaa/recent.html","filename":"recent.html","expires_at":1780000000}
+{"ts":"2026-05-10T14:30:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_bbb","url":"https://example.pidgin.sh/bbb/midwindow.html","filename":"midwindow.html","expires_at":1780000000}
+{"ts":"2026-05-10T13:00:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_ccc","url":"https://example.pidgin.sh/ccc/oldwindow.html","filename":"oldwindow.html","expires_at":1780000000}
+{"ts":"2026-05-10T14:50:00Z","cwd":"/Users/bdaily/code/other","kind":"upload","item_id":"itm_ddd","url":"https://example.pidgin.sh/ddd/othercwd.html","filename":"othercwd.html","expires_at":1780000000}
+{"ts":"2026-05-10T14:45:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_eee","url":"https://example.pidgin.sh/eee/expired.html","filename":"expired.html","expires_at":1778000000}
+{"ts":"2026-05-10T14:40:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_fff","url":"https://example.pidgin.sh/fff/tombstoned.html","filename":"tombstoned.html","expires_at":1780000000}
+{"ts":"2026-05-10T14:42:00Z","kind":"delete","item_id":"itm_fff"}
+this is not valid json
+{"ts":"2026-05-10T14:35:00Z","cwd":"/Users/bdaily/code/pidgin","kind":"upload","item_id":"itm_ggg","url":"https://example.pidgin.sh/ggg/withcohort.html","filename":"withcohort.html","expires_at":null,"cohort_id":"co_qrs"}
+{"ts":"2026-05-10T14:33:00Z","kind":"unknown","item_id":"itm_zzz"}
