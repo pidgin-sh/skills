@@ -164,6 +164,102 @@ If you give up before the user answers:
 
 The user's tab will see "no longer waiting" on submit. Idempotent — safe to call once on cancellation.
 
+### Multi-recipient responses (paid)
+
+If the user wants to address one artifact to several named humans — "send this
+review to jane, mark, and rick, and tell me what each says" — use the cohort
+variant. The agent labels who got which link; pidgin returns one personalized
+URL per recipient, and `wait` returns each response keyed by label.
+
+Trust model: same as single-respondent (URL knowledge = capability). The labels
+are agent-asserted, not server-verified — a recipient who forwards their link
+gives the capability away.
+
+#### Upload with recipients
+
+```bash
+<base-dir>/scripts/pidgin upload ./review.html --respondents=jane,mark,rick
+# → {
+#     "id": "itm_…",
+#     "url": "https://<sub>.pidgin.sh/<random6>/review.html",
+#     "cohort": {
+#       "id": "co_…",
+#       "expires_at": …,
+#       "recipients": [
+#         { "label": "jane", "handle": "ch_…", "url": ".../review.html#ch=ch_…" },
+#         { "label": "mark", "handle": "ch_…", "url": ".../review.html#ch=ch_…" },
+#         { "label": "rick", "handle": "ch_…", "url": ".../review.html#ch=ch_…" }
+#       ]
+#     }
+#   }
+```
+
+Send each recipient their own personalized URL (do NOT send the bare `url`
+field — that has no fragment and won't activate the response shim). Remember
+the `cohort.id` for the wait call.
+
+Labels are `[A-Za-z0-9._-]{1,64}`, max 100 distinct, no duplicates. The flag
+implies `--respond`, so you don't need to pass both.
+
+#### Wait for the cohort
+
+```bash
+<base-dir>/scripts/pidgin wait "$COHORT_ID"
+```
+
+The `wait` subcommand auto-detects the id format: `ch_…` runs the
+single-respondent wait, `co_…` runs the cohort wait. The cohort wait long-polls
+with an offset; each round prints one JSON line as new responses come in:
+
+```json
+{ "status": "open",       "responses": [{"label":"jane", ...}], "next": 1, "remaining": ["mark","rick"] }
+{ "status": "open",       "responses": [{"label":"mark", ...}], "next": 2, "remaining": ["rick"] }
+{ "status": "complete",   "responses": [{"label":"rick", ...}], "next": 3, "remaining": [] }
+```
+
+Exits 0 once `status` flips out of `"open"` (`complete`, `timed_out`, or
+`superseded`). The agent should accumulate `responses` across lines if it cares
+about the full set; if it only wants the first, exit on the first line.
+
+Use the same backgrounding pattern as single-respondent waits — long-polling
+ties up your chat turn otherwise. Run with `run_in_background: true` (or
+shell `&`) and check the file when the user mentions they've responded.
+
+#### Personalization (the agent's job)
+
+The injected shim reads the recipient handle from the URL fragment, but it
+does not know the label. To greet each recipient by name, bake a handle→label
+map into the artifact's HTML at upload time:
+
+```html
+<script>
+  var m = (location.hash || "").match(/(?:^#|&)ch=([A-Za-z0-9_]+)/);
+  // The agent fills this map in based on the cohort response.
+  var who = { "ch_aaa…": "Jane", "ch_bbb…": "Mark", "ch_ccc…": "Rick" }[m && m[1]] || "there";
+  document.getElementById('greeting').textContent = "Hi " + who + ", please review:";
+</script>
+```
+
+Pidgin doesn't require this pattern — the artifact body is identical for every
+recipient. If the agent doesn't care about personalization, skip the map.
+
+#### Updating a cohort
+
+Upload a new version with `update <id> <path> --respondents=<csv>` to supersede
+the prior cohort. All previously-open recipient channels transition to
+`superseded`; any unanswered tabs see "no longer waiting" on submit. The
+response includes a fresh `cohort` block with new handles and URLs. Re-issue
+your `wait` against the new cohort id.
+
+#### Abandoning a cohort
+
+```bash
+<base-dir>/scripts/pidgin abandon "$COHORT_ID"
+```
+
+Same dispatch as wait — `co_…` flips all open members to `abandoned` in one
+call. Already-responded members keep their payloads. Idempotent.
+
 ## Upload a new artifact
 
 ```bash
@@ -246,5 +342,9 @@ When the wrapper exits non-zero, parse stdout — it contains the API's JSON `{ 
 - **404** — wrong item id, or the item belongs to a different user.
 - **410** (with `error: channel_closed`, `reason`) — channel is no longer open; check `reason` (`responded`, `timed_out`, `superseded`, `abandoned`).
 - **403** (on `/respond`) — origin does not match the artifact's subdomain. Should not happen if the artifact is using the injected `window.pidgin.respond`.
+- **400 missing_channel_header** — `--respondents` was sent without `--respond`. Add `--respond` and retry. (The wrapper sets both for you when you pass `--respondents`, so this only fires if you call the API directly.)
+- **400 invalid_recipients** — a recipient label doesn't match `[A-Za-z0-9._-]{1,64}`. Surface verbatim.
+- **400 too_many_recipients** — cohort cap is 100 recipients per upload.
+- **400 duplicate_recipients** — labels in `--respondents` must be unique.
 
 When invoked, do the smallest thing the user asked for — one upload, one update, one list — and stop. Don't proactively delete or list unless asked.
