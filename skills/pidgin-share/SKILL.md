@@ -17,6 +17,19 @@ Before you upload, decide what the user actually needs. Match on the *shape of t
 | One human needs to respond (approve, pick, fill out) | `--respond` (single channel) |
 | Multiple named humans each need to respond — "send to jane, mark, rick", "find a time with X/Y/Z", "have the team vote", "get RSVPs", "show A and B which mockup they prefer" | `--respondents=jane,mark,rick` (cohort) |
 
+## Identifying yourself
+
+Every `upload` and `update` call must include `--agent <your-harness-slug>` and
+`--model <your-model-id>`. Use a stable, lowercase, hyphenated slug for your
+agent (`claude-code`, `codex`, `cursor`, `aider`, `goose`, `roo-code`). For the
+model, use the exact model id your runtime exposes (e.g., `claude-opus-4-7`,
+`gpt-5-codex`). If you genuinely cannot identify your model, omit `--model`
+rather than guessing.
+
+These values become part of the artifact's record and show up on the dashboard
+("created by claude-code · claude-opus-4-7"). They are metadata, not auth — the
+server stores whatever you send.
+
 ## Recovering URLs you've lost
 
 If you don't remember a URL you created earlier in this conversation — for example, after context compaction — run `<base-dir>/scripts/pidgin recent`. It lists artifacts uploaded from the current working directory in the last hour, newest first. Widen with `--since 24h` or `--all` if needed; use `--json` for programmatic access. The wrapper logs successful uploads (and delete tombstones) to `~/.pidgin/uploads.jsonl` automatically — no setup, no extra calls at upload time. The log is local-only; nothing about your project paths is sent to the pidgin server.
@@ -113,8 +126,9 @@ If `$ALLOW_CH` is `false`, stop and tell the user:
 ### Upload with a channel
 
 ```bash
-<base-dir>/scripts/pidgin upload ./ask.html --respond
-# → { "id":"itm_…", "url":"…", "version":1, "channel": { "handle":"ch_…", "expires_at":… }, ... }
+<base-dir>/scripts/pidgin upload ./ask.html --respond --agent claude-code --model claude-opus-4-7
+# → { "id":"itm_…", "url":"…", "version":1, "channel": { "handle":"ch_…", "expires_at":… },
+#     "agent":"claude-code", "model":"claude-opus-4-7", ... }
 ```
 
 Print the `url` to the user. Remember the `channel.handle`.
@@ -263,10 +277,12 @@ gives the capability away.
 #### Upload with recipients
 
 ```bash
-<base-dir>/scripts/pidgin upload ./review.html --respondents=jane,mark,rick
+<base-dir>/scripts/pidgin upload ./review.html --respondents=jane,mark,rick --agent claude-code --model claude-opus-4-7
 # → {
 #     "id": "itm_…",
 #     "url": "https://<sub>.pidgin.sh/<random6>/review.html",
+#     "agent": "claude-code",
+#     "model": "claude-opus-4-7",
 #     "cohort": {
 #       "id": "co_…",
 #       "expires_at": …,
@@ -360,7 +376,7 @@ call. Already-responded members keep their payloads. Idempotent.
 ## Upload a new artifact
 
 ```bash
-<base-dir>/scripts/pidgin upload <path>
+<base-dir>/scripts/pidgin upload <path> --agent <your-slug> --model <your-model-id>
 ```
 
 The wrapper picks the basename and detects the content-type from the extension. Override with `--filename NAME` if needed (rare).
@@ -383,7 +399,9 @@ Supported extensions and their tier:
 The output on success is JSON like:
 
 ```json
-{ "id": "itm_…", "url": "https://<sub>.pidgin.sh/<random6>/<filename>", "version": 1, "size_bytes": 1234, "content_type": "text/html" }
+{ "id": "itm_…", "url": "https://<sub>.pidgin.sh/<random6>/<filename>",
+  "version": 1, "size_bytes": 1234, "content_type": "text/html",
+  "agent": "claude-code", "model": "claude-opus-4-7" }
 ```
 
 For plain uploads and single-response uploads, print the `url` value to the user — only the URL, not the full JSON. For cohort uploads, print each recipient's personalized `cohort.recipients[].url`, not the bare item URL. Remember the `id` — you'll need it if the user asks you to update or delete the same artifact later in this conversation.
@@ -393,7 +411,7 @@ For plain uploads and single-response uploads, print the `url` value to the user
 When the user wants to revise something you already uploaded in this session, reuse the `id` you saved:
 
 ```bash
-<base-dir>/scripts/pidgin update <id> <path>
+<base-dir>/scripts/pidgin update <id> <path> --agent <your-slug> --model <your-model-id>
 ```
 
 Same body shape. The response includes `version: 2` (or 3, 4, …). The `url` field is unchanged — share that. Old versions stay reachable at `<url-without-filename>/v<N>/<filename>` (build the versioned URL yourself if the user asks for one — pidgin does not return it).
