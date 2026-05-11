@@ -22,8 +22,8 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   pidgin me
-  pidgin upload <path> [--respond | --respondents=a,b,c] [--filename NAME]
-  pidgin update <id> <path> [--respond | --respondents=a,b,c] [--filename NAME]
+  pidgin upload <path> [--respond | --respondents=a,b,c] [--filename NAME] [--agent SLUG] [--model ID]
+  pidgin update <id> <path> [--respond | --respondents=a,b,c] [--filename NAME] [--agent SLUG] [--model ID]
   pidgin list [--limit N]
   pidgin delete <id> [--version N]
   pidgin check <id>            # non-blocking status check
@@ -51,6 +51,23 @@ detect_ct() {
     *.csv)          echo "text/csv" ;;
     *)              echo "application/octet-stream" ;;
   esac
+}
+
+# Validate an --agent / --model flag value. On mismatch, exit 2 with a clear
+# message naming the flag. Empty values exit too (the agent should omit the
+# flag rather than pass an empty string).
+# Bracket expression note: a literal ']' must be the first character of the
+# class, and '-' must be last — otherwise BSD/GNU grep close the class early.
+validate_metadata() {
+  local field="$1" value="$2"
+  if [ -z "$value" ]; then
+    echo "pidgin: --$field requires a non-empty value" >&2
+    exit 2
+  fi
+  if ! printf '%s' "$value" | grep -qE '^[]A-Za-z0-9._/[-]{1,64}$'; then
+    echo "pidgin: invalid --$field value '$value': must match [A-Za-z0-9._/[\\]-]{1,64}" >&2
+    exit 2
+  fi
 }
 
 # Resolve the log path. Honors $PIDGIN_LOG_DIR; falls back to $HOME/.pidgin,
@@ -234,15 +251,23 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
       respond=""
       recipients=""
       filename=""
+      agent=""
+      model=""
       while [ $# -gt 0 ]; do
         case "$1" in
           --respond)        respond=1; shift ;;
           --respondents=*)  recipients="${1#--respondents=}"; shift ;;
           --respondents)    recipients="$2"; shift 2 ;;
           --filename)       filename="$2"; shift 2 ;;
+          --agent)          agent="$2"; shift 2 ;;
+          --agent=*)        agent="${1#--agent=}"; shift ;;
+          --model)          model="$2"; shift 2 ;;
+          --model=*)        model="${1#--model=}"; shift ;;
           *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
         esac
       done
+      [ -z "$agent" ] || validate_metadata agent "$agent"
+      [ -z "$model" ] || validate_metadata model "$model"
       [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
       [ -n "$filename" ] || filename=$(basename "$path")
       ct=$(detect_ct "$filename")
@@ -251,6 +276,8 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         -H "Content-Type: $ct"
         --data-binary "@$path"
       )
+      [ -n "$agent" ] && args+=(-H "X-Pidgin-Agent: $agent")
+      [ -n "$model" ] && args+=(-H "X-Pidgin-Model: $model")
       # --respondents implies channel-respond; setting it without --respond is fine.
       if [ -n "$recipients" ] || [ -n "$respond" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
@@ -272,15 +299,23 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
       respond=""
       recipients=""
       filename=""
+      agent=""
+      model=""
       while [ $# -gt 0 ]; do
         case "$1" in
           --respond)        respond=1; shift ;;
           --respondents=*)  recipients="${1#--respondents=}"; shift ;;
           --respondents)    recipients="$2"; shift 2 ;;
           --filename)       filename="$2"; shift 2 ;;
+          --agent)          agent="$2"; shift 2 ;;
+          --agent=*)        agent="${1#--agent=}"; shift ;;
+          --model)          model="$2"; shift 2 ;;
+          --model=*)        model="${1#--model=}"; shift ;;
           *) echo "pidgin: unknown flag: $1" >&2; exit 2 ;;
         esac
       done
+      [ -z "$agent" ] || validate_metadata agent "$agent"
+      [ -z "$model" ] || validate_metadata model "$model"
       [ -f "$path" ] || { echo "pidgin: no such file: $path" >&2; exit 2; }
       [ -n "$filename" ] || filename=$(basename "$path")
       ct=$(detect_ct "$filename")
@@ -289,6 +324,8 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         -H "Content-Type: $ct"
         --data-binary "@$path"
       )
+      [ -n "$agent" ] && args+=(-H "X-Pidgin-Agent: $agent")
+      [ -n "$model" ] && args+=(-H "X-Pidgin-Model: $model")
       if [ -n "$recipients" ] || [ -n "$respond" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
       fi
