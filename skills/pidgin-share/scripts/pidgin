@@ -148,7 +148,7 @@ _json_escape() {
 # Append a kind=upload record. Argument: the upload response body (JSON).
 record_upload_success() {
   local body="$1"
-  local item_id url filename expires channel_handle cohort_id ts cwd_esc
+  local item_id url filename expires channel_handle cohort_id ts cwd_esc agent_esc model_esc
 
   item_id=$(_json_str "$body" "id")
   url=$(_json_str "$body" "url")
@@ -182,6 +182,14 @@ record_upload_success() {
   fi
   if [ -n "$cohort_id" ]; then
     line+=',"cohort_id":"'"$cohort_id"'"'
+  fi
+  if [ -n "${PIDGIN_LAST_AGENT:-}" ]; then
+    agent_esc=$(_json_escape "$PIDGIN_LAST_AGENT")
+    line+=',"agent":"'"$agent_esc"'"'
+  fi
+  if [ -n "${PIDGIN_LAST_MODEL:-}" ]; then
+    model_esc=$(_json_escape "$PIDGIN_LAST_MODEL")
+    line+=',"model":"'"$model_esc"'"'
   fi
   line+='}'
 
@@ -283,6 +291,8 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
       fi
       [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
+      export PIDGIN_LAST_AGENT="$agent"
+      export PIDGIN_LAST_MODEL="$model"
       api_call_capture POST /v1/items "${args[@]}"
       [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
       if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
@@ -330,6 +340,8 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         args+=(-H "X-Pidgin-Channel: respond")
       fi
       [ -n "$recipients" ] && args+=(-H "X-Pidgin-Recipients: $recipients")
+      export PIDGIN_LAST_AGENT="$agent"
+      export PIDGIN_LAST_MODEL="$model"
       api_call_capture PUT "/v1/items/$id" "${args[@]}"
       [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
       if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then

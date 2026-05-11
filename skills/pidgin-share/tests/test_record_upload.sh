@@ -52,4 +52,31 @@ record_upload_success "$body"
 line=$(tail -n1 "$LOG")
 assert_match "cwd escaped" '"cwd":"/Users/bdaily/code/with\\"quote\\\\bsl"' "$line"
 
+# Test: agent/model in upload log line when wrapper invocation supplied them.
+# record_upload_success only knows what the response body returned. The wrapper
+# also needs to fold the user-supplied --agent/--model into the log when the
+# response doesn't echo them. We record from local-supplied vars by setting
+# PIDGIN_LAST_AGENT/PIDGIN_LAST_MODEL before calling.
+PIDGIN_LAST_AGENT="claude-code" PIDGIN_LAST_MODEL="claude-opus-4-7" \
+  record_upload_success '{"id":"itm_meta1","url":"https://x.pidgin.sh/abcd1234/p.html","current_filename":"p.html","expires_at":1234567890}'
+LOG="$PIDGIN_LOG_DIR/uploads.jsonl"
+last=$(tail -n1 "$LOG")
+assert_match "log line includes agent" '"agent":"claude-code"' "$last"
+assert_match "log line includes model" '"model":"claude-opus-4-7"' "$last"
+
+# When neither var is set, agent/model fields are omitted (not null).
+unset PIDGIN_LAST_AGENT PIDGIN_LAST_MODEL
+record_upload_success '{"id":"itm_meta2","url":"https://x.pidgin.sh/efgh5678/q.html","current_filename":"q.html","expires_at":null}'
+last=$(tail -n1 "$LOG")
+if printf '%s' "$last" | grep -qE '"agent":'; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); echo "  FAIL: agent field present when not supplied"
+else
+  PASS_COUNT=$((PASS_COUNT + 1)); echo "  PASS: agent field absent when not supplied"
+fi
+if printf '%s' "$last" | grep -qE '"model":'; then
+  FAIL_COUNT=$((FAIL_COUNT + 1)); echo "  FAIL: model field present when not supplied"
+else
+  PASS_COUNT=$((PASS_COUNT + 1)); echo "  PASS: model field absent when not supplied"
+fi
+
 report_and_exit
