@@ -61,6 +61,18 @@ Behavior:
 
 Subcommands: `me`, `upload`, `update`, `list`, `delete`, `check`, `wait`, `abandon`. Run the script with `--help` for the full signature.
 
+## Am I authenticated?
+
+When the user asks "am I auth'd / signed in to pidgin?" — **don't go looking for a global `pidgin` binary on `PATH`, and don't look in `~/.pidgin/`**. There is no separately-installed CLI; the wrapper at `<base-dir>/scripts/pidgin` is the CLI, and `~/.pidgin/uploads.jsonl` is just a local upload log (not an auth signal).
+
+The single source of truth is `<base-dir>/scripts/pidgin me`:
+
+- Exit 0 with a JSON body containing `id` / `subdomain` → **authenticated**. The key came from either `$PIDGIN_API_KEY` (env) or `${XDG_CONFIG_HOME:-$HOME/.config}/pidgin/credentials` (file written by `pidgin login`) — the wrapper handles both transparently.
+- Exit 2 with `Not authenticated. Run 'pidgin login' to get started.` → **not authenticated**. Follow "First-time auth" below.
+- HTTP 401 from a successful exec → the key was found but the server rejected it (expired/revoked). Treat as not authenticated and start the login flow.
+
+Don't try to read the credentials file directly to "check" auth — the wrapper already does that, and a successful `pidgin me` proves the key actually works against the server, which a file check can't.
+
 ## First-time auth
 
 If `pidgin <anything>` (other than `login` or `logout`) exits with `Not authenticated. Run 'pidgin login' to get started.`, run the device flow:
