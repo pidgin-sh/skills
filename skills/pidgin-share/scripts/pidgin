@@ -14,9 +14,22 @@ set -u
 API="${PIDGIN_API_BASE:-https://api.pidgin.sh}"
 
 if [ -z "${PIDGIN_API_KEY:-}" ]; then
-  echo "PIDGIN_API_KEY is not set. Create a key at https://pidgin.sh/dashboard/keys and export it." >&2
-  exit 2
+  cred_file="${XDG_CONFIG_HOME:-$HOME/.config}/pidgin/credentials"
+  if [ -r "$cred_file" ]; then
+    # shellcheck disable=SC1090
+    . "$cred_file"
+  fi
 fi
+
+case "${1:-}" in
+  login|logout) ;;
+  *)
+    if [ -z "${PIDGIN_API_KEY:-}" ]; then
+      echo "Not authenticated. Run 'pidgin login' to get started." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 usage() {
   cat >&2 <<'EOF'
@@ -31,6 +44,7 @@ Usage:
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
   pidgin recent [--since 1h|24h|7d] [--all] [--limit N] [--json]
                                # local recall: list URLs you've uploaded recently
+  pidgin logout
 EOF
 }
 
@@ -625,6 +639,14 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         fi
       fi
       rm -f "$awk_out" "$enriched"
+      exit 0
+      ;;
+
+    logout)
+      cred_file="${XDG_CONFIG_HOME:-$HOME/.config}/pidgin/credentials"
+      state_file="${XDG_STATE_HOME:-$HOME/.local/state}/pidgin/pending-login"
+      rm -f "$cred_file" "$state_file"
+      echo "Logged out (server-side key is still valid — revoke at https://pidgin.sh/dashboard/keys if needed)."
       exit 0
       ;;
 

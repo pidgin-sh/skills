@@ -46,6 +46,15 @@ assert_file_exists() {
   fi
 }
 
+assert_file_absent() {
+  local name="$1" path="$2"
+  if [ ! -e "$path" ]; then
+    PASS_COUNT=$((PASS_COUNT + 1)); echo "  PASS: $name"
+  else
+    FAIL_COUNT=$((FAIL_COUNT + 1)); echo "  FAIL: $name (unexpected file: $path)"
+  fi
+}
+
 assert_file_mode() {
   local name="$1" expected="$2" path="$3"
   local actual
