@@ -1,6 +1,6 @@
 ---
 name: pidgin-share
-description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection). Also covers recovering URLs you've previously created but forgotten (`pidgin recent`).
+description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection). Also covers recovering URLs you've previously created but forgotten (`pidgin recent`) and first-time authentication (`pidgin login`).
 ---
 
 # pidgin-share
@@ -54,22 +54,28 @@ The wrapper is at `<base-dir>/scripts/pidgin` — i.e., the file `scripts/pidgin
 
 Behavior:
 
-- Reads `$PIDGIN_API_KEY` for auth.
+- Reads `$PIDGIN_API_KEY` for auth. If unset, sources `${XDG_CONFIG_HOME:-$HOME/.config}/pidgin/credentials` automatically (written by `pidgin login`).
 - Auto-detects `Content-Type` from the file extension and uses the file's basename for `X-Filename`.
 - Prints the API JSON response on stdout.
 - On HTTP non-2xx, the response body (which is `{ "error": ..., "message": ... }`) still goes to stdout, the HTTP code goes to stderr, and the script exits 1. Parse stdout with `jq` to get `error`/`message`.
 
 Subcommands: `me`, `upload`, `update`, `list`, `delete`, `check`, `wait`, `abandon`. Run the script with `--help` for the full signature.
 
-## Prerequisites
+## First-time auth
 
-The user must have an API key. Read it from `$PIDGIN_API_KEY`.
+If `pidgin <anything>` (other than `login` or `logout`) exits with `Not authenticated. Run 'pidgin login' to get started.`, run the device flow:
 
-If `$PIDGIN_API_KEY` is unset, stop and tell the user:
+1. Run `<base-dir>/scripts/pidgin login`. It prints a URL on its own line and an 8-character user code (e.g. `WXYZ-9KQ7`), then exits immediately.
+2. **Display the URL and the code to the user verbatim.** Tell them:
+   > Open this URL in your browser. Before clicking Approve, confirm the page shows the code `WXYZ-9KQ7` — it must match what I just printed. If it doesn't match, deny the request.
+   This is a phishing defense — the dashboard echoes the same code back so a substituted URL is detectable.
+3. Wait for the user to confirm they've approved (or to redirect you). **Do not call `pidgin login --wait`** — that blocks the tool turn for up to 10 minutes.
+4. Run `<base-dir>/scripts/pidgin login --finish`. It polls for ~60s and either:
+   - Exits 0 with `Saved credentials to <path>` — resume the original command.
+   - Exits 75 (still pending) — ask the user to confirm they've approved, then call `pidgin login --finish` again.
+   - Exits 1 with `Approval denied.` or `Code expired.` — start over with `pidgin login`.
 
-> No `PIDGIN_API_KEY` set. Create a key at https://pidgin.sh/dashboard/keys, then run `export PIDGIN_API_KEY=pdg_…` in your shell and try again.
-
-Do not proceed without a key.
+To sign out, run `<base-dir>/scripts/pidgin logout` (local only — the server-side key stays valid until revoked at https://pidgin.sh/dashboard/keys).
 
 ## About plans
 
@@ -447,7 +453,7 @@ Both succeed silently (HTTP 204, empty body). Confirm the deletion to the user w
 
 When the wrapper exits non-zero, parse stdout — it contains the API's JSON `{ "error": "<code>", "message": "<human readable>" }`. Surface the `message` to the user verbatim. Do not paraphrase, do not retry. Common cases:
 
-- **401** — `PIDGIN_API_KEY` is missing, expired, or revoked. Tell the user to recreate one at https://pidgin.sh/dashboard/keys.
+- **401** — API key is missing, expired, or revoked. Run `pidgin login` (see "First-time auth"), complete the flow, then retry the original command **exactly once**.
 - **402** — two cases, distinguished by `error`:
   - `storage_quota_exceeded` — storage quota exceeded. Tell the user the message verbatim; they can free space by deleting older items.
   - `channel_not_allowed` — interactive response channels require paid. Surface the message verbatim.
