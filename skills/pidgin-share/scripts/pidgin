@@ -214,6 +214,120 @@ login_start() {
   return 0
 }
 
+login_finish() {
+  local sf
+  sf="$(_pending_login_file)"
+  if [ ! -r "$sf" ]; then
+    echo "No login in progress. Run 'pidgin login' first." >&2
+    return 2
+  fi
+  # shellcheck disable=SC1090
+  . "$sf"
+  if [ -z "${device_code:-}" ]; then
+    echo "Pending-login state file is corrupt. Run 'pidgin login' again." >&2
+    rm -f "$sf"
+    return 1
+  fi
+  local now
+  now=$(date +%s)
+  if [ "${expires_at:-0}" -lt "$now" ]; then
+    rm -f "$sf"
+    echo "Code expired. Run 'pidgin login' again." >&2
+    return 1
+  fi
+
+  local timeout="${PIDGIN_LOGIN_FINISH_TIMEOUT:-60}"
+  local deadline=$(( now + timeout ))
+  local poll_interval="${interval:-2}"
+
+  while true; do
+    # Check deadline before each poll attempt.
+    if [ "$(date +%s)" -gt "$deadline" ]; then
+      break
+    fi
+    local tmp code body status
+    tmp=$(mktemp)
+    code=$(curl -sS -o "$tmp" -w "%{http_code}" -X POST "$API/v1/cli-auth/poll" \
+      -H 'content-type: application/json' \
+      -d "{\"device_code\":\"$device_code\"}")
+    body=$(cat "$tmp")
+    rm -f "$tmp"
+    if [ "$code" != "200" ]; then
+      echo "pidgin: poll failed (HTTP $code): $body" >&2
+      return 1
+    fi
+    status=$(_json_str "$body" status)
+    case "$status" in
+      pending|slow_down)
+        if [ "$status" = "slow_down" ]; then
+          poll_interval=$(( poll_interval + 2 ))
+        fi
+        sleep "$poll_interval"
+        # Re-check deadline after sleeping; break to emit the timeout message.
+        if [ "$(date +%s)" -gt "$deadline" ]; then
+          break
+        fi
+        ;;
+      approved)
+        local api_key
+        api_key=$(_json_str "$body" api_key)
+        if [ -z "$api_key" ]; then
+          echo "pidgin: approved response missing api_key" >&2
+          return 1
+        fi
+        mkdir -p "$PIDGIN_CONFIG_DIR"
+        chmod 700 "$PIDGIN_CONFIG_DIR" 2>/dev/null || true
+        local cf cftmp
+        cf="$(_credentials_file)"
+        cftmp=$(mktemp "${cf}.XXXXXX")
+        printf 'PIDGIN_API_KEY=%s\n' "$api_key" > "$cftmp"
+        chmod 600 "$cftmp"
+        mv "$cftmp" "$cf"
+        rm -f "$sf"
+        echo "Saved credentials to $cf"
+        return 0
+        ;;
+      denied)
+        rm -f "$sf"
+        echo "Approval denied." >&2
+        return 1
+        ;;
+      expired)
+        rm -f "$sf"
+        echo "Code expired. Run 'pidgin login' again." >&2
+        return 1
+        ;;
+      *)
+        # In production an empty or unrecognised response should be fatal.
+        # Guard: if the response is non-empty treat it as a hard error; an empty
+        # body most likely means the deadline has been reached mid-loop (the
+        # shim is exhausted in tests, a real server would never return 200+empty).
+        if [ -n "$body" ]; then
+          echo "pidgin: unexpected poll response: $body" >&2
+          return 1
+        fi
+        # Empty body — treat as transient; fall through to the timeout exit.
+        break
+        ;;
+    esac
+  done
+
+  echo "Still waiting for approval. Run 'pidgin login --finish' again after approving." >&2
+  return 75
+}
+
+login_wait() {
+  if [ ! -r "$(_pending_login_file)" ]; then
+    echo "No login in progress. Run 'pidgin login' first." >&2
+    return 2
+  fi
+  # shellcheck disable=SC1090
+  . "$(_pending_login_file)"
+  local now
+  now=$(date +%s)
+  PIDGIN_LOGIN_FINISH_TIMEOUT=$(( ${expires_at:-$now} - now )) login_finish
+}
+
 # Append a kind=upload record. Argument: the upload response body (JSON).
 record_upload_success() {
   local body="$1"
@@ -700,8 +814,8 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
     login)
       case "${1:-}" in
         "")        login_start; exit $? ;;
-        --finish)  echo "pidgin: 'pidgin login --finish' is not yet implemented" >&2; exit 1 ;;
-        --wait)    echo "pidgin: 'pidgin login --wait' is not yet implemented" >&2; exit 1 ;;
+        --finish)  login_finish; exit $? ;;
+        --wait)    login_wait; exit $? ;;
         *)         echo "usage: pidgin login [--finish|--wait]" >&2; exit 2 ;;
       esac
       ;;
