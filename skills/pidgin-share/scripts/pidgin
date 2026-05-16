@@ -44,6 +44,7 @@ Usage:
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
   pidgin recent [--since 1h|24h|7d] [--all] [--limit N] [--json]
                                # local recall: list URLs you've uploaded recently
+  pidgin login
   pidgin logout
 EOF
 }
@@ -157,6 +158,60 @@ _json_escape() {
   s=${s//\\/\\\\}
   s=${s//\"/\\\"}
   printf '%s' "$s"
+}
+
+PIDGIN_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pidgin"
+PIDGIN_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pidgin"
+
+_pending_login_file() { printf '%s/pending-login' "$PIDGIN_STATE_DIR"; }
+_credentials_file()   { printf '%s/credentials'   "$PIDGIN_CONFIG_DIR"; }
+
+login_start() {
+  local tmp body code
+  tmp=$(mktemp)
+  code=$(curl -sS -o "$tmp" -w "%{http_code}" -X POST "$API/v1/cli-auth/start" \
+    -H 'content-type: application/json' \
+    -d "{\"hostname\":\"$(_json_escape "$(hostname -s 2>/dev/null || echo unknown)")\",\"client\":\"pidgin-share-skill\"}")
+  if [ "$code" != "200" ]; then
+    echo "pidgin: could not reach $API/v1/cli-auth/start (HTTP $code)" >&2
+    cat "$tmp" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+  body=$(cat "$tmp")
+  rm -f "$tmp"
+
+  local device_code user_code verification_uri interval expires_in expires_at
+  device_code=$(_json_str "$body" device_code)
+  user_code=$(_json_str "$body" user_code)
+  verification_uri=$(_json_str "$body" verification_uri)
+  interval=$(_json_num "$body" interval); interval=${interval:-2}
+  expires_in=$(_json_num "$body" expires_in); expires_in=${expires_in:-600}
+  if [ -z "$device_code" ] || [ -z "$user_code" ] || [ -z "$verification_uri" ]; then
+    echo "pidgin: unexpected response from /v1/cli-auth/start: $body" >&2
+    return 1
+  fi
+  expires_at=$(( $(date +%s) + expires_in ))
+
+  # URL on its own line with no decoration so agents summarizing stdout don't drop it.
+  printf 'Open this URL in your browser to approve:\n\n  %s\n\nCode: %s\n' \
+    "$verification_uri" "$user_code"
+
+  # Best-effort browser open.
+  { open "$verification_uri" >/dev/null 2>&1 || xdg-open "$verification_uri" >/dev/null 2>&1; } &
+
+  mkdir -p "$PIDGIN_STATE_DIR"
+  chmod 700 "$PIDGIN_STATE_DIR" 2>/dev/null || true
+  local sf sftmp
+  sf="$(_pending_login_file)"
+  sftmp=$(mktemp "${sf}.XXXXXX")
+  printf 'device_code=%s\nuser_code=%s\ninterval=%s\nexpires_at=%s\n' \
+    "$device_code" "$user_code" "$interval" "$expires_at" > "$sftmp"
+  chmod 600 "$sftmp"
+  mv "$sftmp" "$sf"
+
+  printf '\nRun `pidgin login --finish` after approving.\n'
+  return 0
 }
 
 # Append a kind=upload record. Argument: the upload response body (JSON).
@@ -640,6 +695,15 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
       fi
       rm -f "$awk_out" "$enriched"
       exit 0
+      ;;
+
+    login)
+      case "${1:-}" in
+        "")        login_start; exit $? ;;
+        --finish)  echo "pidgin: 'pidgin login --finish' is not yet implemented" >&2; exit 1 ;;
+        --wait)    echo "pidgin: 'pidgin login --wait' is not yet implemented" >&2; exit 1 ;;
+        *)         echo "usage: pidgin login [--finish|--wait]" >&2; exit 2 ;;
+      esac
       ;;
 
     logout)
