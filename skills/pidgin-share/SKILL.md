@@ -73,6 +73,29 @@ The single source of truth is `<base-dir>/scripts/pidgin me`:
 
 Don't try to read the credentials file directly to "check" auth — the wrapper already does that, and a successful `pidgin me` proves the key actually works against the server, which a file check can't.
 
+## When `$PIDGIN_API_KEY` shadows login/logout
+
+The wrapper prefers `$PIDGIN_API_KEY` over the credentials file: if the env var is set, the credentials file is never sourced. `pidgin login` and `pidgin logout` only touch the file — they do not modify the user's shell environment. So with `$PIDGIN_API_KEY` set, both appear to do nothing:
+
+- `pidgin login` completes successfully and writes the new key to the file, but `pidgin me` keeps returning the old (env-var) identity.
+- `pidgin logout` deletes the file, but `pidgin me` still succeeds because the env var still resolves.
+
+**Before running `login` or `logout` on the user's behalf, check the env first:**
+
+```bash
+[ -n "${PIDGIN_API_KEY:-}" ] && echo "PIDGIN_API_KEY is set" || echo "PIDGIN_API_KEY is not set"
+```
+
+If it is set, stop and tell the user verbatim:
+
+> `PIDGIN_API_KEY` is set in your shell, which overrides the credentials file. `pidgin login` and `pidgin logout` will appear to do nothing while it's set. Either:
+> - update `PIDGIN_API_KEY` in your shell profile (`.zshrc`, `.envrc`, etc.) directly, or
+> - `unset PIDGIN_API_KEY` (and remove it from your profile) so the credentials file takes over.
+>
+> Then ask me to re-run the command.
+
+Do not `unset` it for them — the var is likely exported from a profile you can't see, and an `unset` in your sandboxed shell won't persist to their session. The user has to make the change.
+
 ## First-time auth
 
 If `pidgin <anything>` (other than `login` or `logout`) exits with `Not authenticated. Run 'pidgin login' to get started.`, run the device flow:
@@ -87,7 +110,7 @@ If `pidgin <anything>` (other than `login` or `logout`) exits with `Not authenti
    - Exits 75 (still pending) — ask the user to confirm they've approved, then call `pidgin login --finish` again.
    - Exits 1 with `Approval denied.` or `Code expired.` — start over with `pidgin login`.
 
-To sign out, run `<base-dir>/scripts/pidgin logout` (local only — the server-side key stays valid until revoked at https://pidgin.sh/dashboard/keys).
+To sign out, run `<base-dir>/scripts/pidgin logout` (local only — the server-side key stays valid until revoked at https://pidgin.sh/dashboard/keys). If `$PIDGIN_API_KEY` is set, see ["When `$PIDGIN_API_KEY` shadows login/logout"](#when-pidgin_api_key-shadows-loginlogout) before running — `logout` will look like a no-op until the env var is cleared.
 
 ## About plans
 
