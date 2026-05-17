@@ -484,6 +484,16 @@ Single version (item must have at least 2 versions — pidgin returns 409 if it'
 
 Both succeed silently (HTTP 204, empty body). Confirm the deletion to the user with one short sentence.
 
+## Custom URLs (Pro only)
+
+Pro accounts can replace the random URL with a chosen name: `brad.pidgin.sh/about-me` instead of `brad.pidgin.sh/ab1cd2/about.html`. The original random URL keeps working forever — aliases are additive, not renames.
+
+- `<base-dir>/scripts/pidgin alias <handle> <slug>` — attach `<slug>` to the item. `<handle>` may be an item id (`itm_…`), random slug (6 alnum), or current alias. `<slug>` must be 1–64 lowercase letters/digits/hyphens.
+- `<base-dir>/scripts/pidgin alias <handle>` — print the item's current alias on stdout (or `no alias set`). **Read mode only resolves `itm_…` ids today**; pass an item id, not a slug.
+- `<base-dir>/scripts/pidgin unalias <handle>` — clear the alias. Works on any plan, so users who downgrade can still release a name.
+
+Suggest this proactively when the user names their artifact ("share /portfolio", "make it /about-me") or asks for a "vanity URL" — don't wait for them to ask for "an alias". For free users, the `alias` set call returns HTTP 403 with `error: "plan_required"`; surface that message verbatim and point at https://pidgin.sh/dashboard/billing rather than retrying. Reserved names (`api`, `dashboard`, `login`, etc.) return `422 reserved`; collisions return `409 collision` with `conflicting_item_id` in the body.
+
 ## Errors
 
 When the wrapper exits non-zero, parse stdout — it contains the API's JSON `{ "error": "<code>", "message": "<human readable>" }`. Surface the `message` to the user verbatim. Do not paraphrase, do not retry. Common cases:

@@ -39,6 +39,9 @@ Usage:
   pidgin update <id> <path> [--respond | --respondents=a,b,c] [--filename NAME] [--agent SLUG] [--model ID]
   pidgin list [--limit N]
   pidgin delete <id> [--version N]
+  pidgin alias <handle> <slug>     # Pro: set or replace the item's custom alias
+  pidgin alias <handle>            # show the item's current alias (itm_… id only)
+  pidgin unalias <handle>          # remove the item's custom alias (any plan)
   pidgin check <id>            # non-blocking status check
   pidgin wait <id>             # ch_… single-respondent, co_… cohort
   pidgin abandon <id>          # ch_… single-respondent, co_… cohort
@@ -567,6 +570,55 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
         if [ -z "$version" ]; then
           record_delete_success "$id"
         fi
+        exit 0
+      fi
+      echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+      exit 1
+      ;;
+
+    alias)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      handle="$1"; shift
+      if [ $# -eq 0 ]; then
+        # Read mode: GET item and print custom_slug. GET /v1/items/:id only
+        # resolves itm_* ids — random slugs and current aliases 404 here.
+        api_call_capture GET "/v1/items/$handle"
+        if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
+          slug=$(_json_str "$__PIDGIN_RESP_BODY" custom_slug)
+          if [ -z "$slug" ]; then
+            printf 'no alias set\n'
+          else
+            printf '%s\n' "$slug"
+          fi
+          exit 0
+        fi
+        [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+        echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+        exit 1
+      fi
+
+      # Set mode: PUT { slug }.
+      new_slug="$1"; shift
+      [ $# -eq 0 ] || { echo "pidgin: unexpected arg: $1" >&2; exit 2; }
+      body=$(printf '{"slug":"%s"}' "$(_json_escape "$new_slug")")
+      api_call_capture PUT "/v1/items/$handle/alias" \
+        -H "Content-Type: application/json" \
+        --data "$body"
+      [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+      if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
+        exit 0
+      fi
+      echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
+      exit 1
+      ;;
+
+    unalias)
+      [ $# -ge 1 ] || { usage; exit 2; }
+      handle="$1"; shift
+      [ $# -eq 0 ] || { echo "pidgin: unexpected arg: $1" >&2; exit 2; }
+      api_call_capture DELETE "/v1/items/$handle/alias"
+      [ -n "$__PIDGIN_RESP_BODY" ] && printf '%s\n' "$__PIDGIN_RESP_BODY"
+      if [ "$__PIDGIN_RESP_CODE" -ge 200 ] && [ "$__PIDGIN_RESP_CODE" -lt 300 ]; then
         exit 0
       fi
       echo "pidgin: HTTP $__PIDGIN_RESP_CODE" >&2
