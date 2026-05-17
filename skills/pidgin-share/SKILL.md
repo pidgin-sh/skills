@@ -1,6 +1,6 @@
 ---
 name: pidgin-share
-description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection). Also covers recovering URLs you've previously created but forgotten (`pidgin recent`) and first-time authentication (`pidgin login`).
+description: Use when sharing an artifact (HTML, image, PDF, plot, report) by URL — or when one or more humans need to respond on that artifact (polls, scheduling, voting, design picks, approvals, RSVPs, surveys, A/B selection). Also covers recovering URLs you've previously created but forgotten (`pidgin recent`), and any pidgin auth question — checking login status ('am I logged in to pidgin?', 'who am I?'), first-time `pidgin login`, or `pidgin logout`. If the user mentions pidgin, invoke this skill.
 ---
 
 # pidgin-share
