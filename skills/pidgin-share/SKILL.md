@@ -42,7 +42,7 @@ Out-of-band deletions (via the dashboard, direct `curl`, or server-side TTL purg
 
 Only tell the user "I am monitoring and will report back" if the current runtime has a real notification path that can wake the agent or inject a follow-up message when `pidgin wait` finishes. A detached shell command that writes to `/tmp` is only a passive cache; it does not notify the user by itself. If no real notification path exists, say that active notification is not available in this runtime and either keep the wait in the foreground with the user's consent or give the links plus the exact command/state you will check when they ask.
 
-**Preflight nudge:** for any non-trivial request, run `<base-dir>/scripts/pidgin me` once up front. It returns the user's plan and which features (`allow_non_html`, `allow_response_channel`) are unlocked, so you can pick the right approach before committing to one.
+**Preflight nudge:** for any non-trivial request, run `<base-dir>/scripts/pidgin me` once up front. It returns the user's plan and which features (`allow_non_html`, `allow_response_channel`, `allow_custom_slug`) are unlocked, so you can pick the right approach before committing to one.
 
 ## The wrapper
 
