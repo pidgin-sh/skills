@@ -814,7 +814,7 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
 
           # Sort key: epoch desc → use (10^11 - epoch) so string sort works descending.
           key = sprintf("%011d", 99999999999 - epoch)
-          records[key "::" NR] = epoch SUBSEP filename SUBSEP url SUBSEP channel SUBSEP cohort SUBSEP line
+          records[key "::" NR] = epoch SUBSEP filename SUBSEP url SUBSEP channel SUBSEP cohort SUBSEP item_id SUBSEP line
           n++
         }
         END {
@@ -832,7 +832,7 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
           if (json_mode) printf "["
           for (a = 1; a <= i && out < limit; a++) {
             split(records[keys[a]], parts, SUBSEP)
-            ep = parts[1]; fn = parts[2]; u = parts[3]; ch = parts[4]; co = parts[5]; raw = parts[6]
+            ep = parts[1]; fn = parts[2]; u = parts[3]; ch = parts[4]; co = parts[5]; id = parts[6]; raw = parts[7]
             if (json_mode) {
               if (out > 0) printf ","
               printf "%s", raw
@@ -842,7 +842,7 @@ if [ -z "${__PIDGIN_SOURCE_ONLY:-}" ]; then
               extra = ""
               if (co != "") extra = " (cohort " co ")"
               else if (ch != "") extra = " (channel " ch ")"
-              printf "%02d:%02d  %-24s %s%s\n", hh, mm, fn, u, extra
+              printf "%-26s  %02d:%02d  %-24s %s%s\n", id, hh, mm, fn, u, extra
             }
             out++
           }

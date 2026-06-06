@@ -32,7 +32,9 @@ server stores whatever you send.
 
 ## Recovering URLs you've lost
 
-If you don't remember a URL you created earlier in this conversation — for example, after context compaction — run `<base-dir>/scripts/pidgin recent`. It lists artifacts uploaded from the current working directory in the last hour, newest first. Widen with `--since 24h` or `--all` if needed; use `--json` for programmatic access. The wrapper logs successful uploads (and delete tombstones) to `~/.pidgin/uploads.jsonl` automatically — no setup, no extra calls at upload time. The log is local-only; nothing about your project paths is sent to the pidgin server.
+If you don't remember a URL you created earlier in this conversation — for example, after context compaction — run `<base-dir>/scripts/pidgin recent`. It lists artifacts uploaded from the current working directory in the last hour, newest first, as `<item-id>  <time>  <filename>  <url>`. Widen with `--since 24h` or `--all` if needed; use `--json` for the full record per line. The wrapper logs successful uploads (and delete tombstones) to `~/.pidgin/uploads.jsonl` automatically — no setup, no extra calls at upload time. The log is local-only; nothing about your project paths is sent to the pidgin server.
+
+The leading `itm_…` is the item id needed by `alias`, `unalias`, and `delete` (below). When you need an id for one of those, read it from `pidgin recent` (or `recent --json`) — do **not** call `pidgin list`, which spends an API round-trip to fetch what the local log already has.
 
 Out-of-band deletions (via the dashboard, direct `curl`, or server-side TTL purge) won't be reflected in `pidgin recent` until you `rm ~/.pidgin/uploads.jsonl`. URLs surfaced from such stale entries will 404.
 
